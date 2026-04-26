@@ -1,0 +1,12 @@
+https://www.youtube.com/watch?v=l1OCmsBnQ3g
+
+-Decomposition pattern ->domain wise divide the service into microservice.
+
+https://www.youtube.com/watch?v=qGlUKtjqaEQ
+-strangler pattern :how you are talking the data from monolithic to microservice ->suppose 1000 user ->first 100 directed to microservice then another microservce build then again 
+route 100 to microservice and so on ....
+CQRS->Commmand query request segregation   
+for read we will have seperate database and for write we will have seperate database we can share the udpated values by kafka event it can take some time but lets take updating the items 
+which is now added so it will show to the user after some millisecond no issue will be there .
+we can also send or update values using procedure (sql)
+
