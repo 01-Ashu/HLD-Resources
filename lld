@@ -1,0 +1,1774 @@
+SOLID Principles — Complete Guide 🏦
+(One Fintech Story, All 5 Principles)
+
+The System We're Building
+A user initiates a payment on Paytm → system processes it → saves to DB → sends notification → generates receipt
+We'll build this system, violate every principle first, then fix it. Let's go! 👇
+
+S — Single Responsibility Principle
+The Rule
+"One class = One job. A class should have only ONE reason to change."
+Real World Analogy
+In a bank, the teller doesn't do fraud detection, accounting, and IT support. Different departments handle each job. Same idea in code.
+❌ Bad — One class doing everything
+class PaymentService {
+    void processPayment(String type, double amount, String userId) {
+
+        // Payment logic
+        if (type.equals("UPI")) { /* UPI logic */ }
+        else if (type.equals("CREDIT_CARD")) { /* Card logic */ }
+
+        // DB logic 🚫
+        Connection conn = DriverManager.getConnection("jdbc:mysql://...");
+        conn.prepareStatement("INSERT INTO payments...").execute();
+
+        // Notification logic 🚫
+        SMSClient.send(userId, "Payment of ₹" + amount + " successful");
+
+        // Receipt logic 🚫
+        PDFGenerator.generate("receipt_" + userId + ".pdf");
+
+        // Fraud check 🚫
+        if (amount > 50000) { flagTransaction(); }
+    }
+}
+Problem: If SMS provider changes, DB changes, PDF format changes — all lead back to this ONE class. That's 5 reasons to change = 5 SRP violations.
+✅ Fix — Split into focused classes
+// Each class owns exactly ONE job
+
+class PaymentProcessor {
+    void process(Payment payment) { /* only payment logic */ }
+}
+
+class PaymentRepository {
+    void save(Payment payment) { /* only DB logic */ }
+}
+
+class NotificationService {
+    void notify(String userId, String msg) { /* only SMS/Email */ }
+}
+
+class ReceiptGenerator {
+    void generate(Payment payment) { /* only PDF receipt */ }
+}
+
+class FraudDetectionService {
+    boolean isSuspicious(Payment payment) { /* only fraud logic */ }
+}
+Interview Line
+"SRP means each class has one job. In our payment system, PaymentProcessor processes, NotificationService notifies, FraudDetectionService checks fraud — never the same class."
+
+O — Open/Closed Principle
+The Rule
+"Your class should be OPEN for extension (add new things) but CLOSED for modification (don't touch existing code)."
+Real World Analogy
+A payment terminal at a shop doesn't need to be replaced when a new card type launches. You just add support — the terminal stays the same.
+❌ Bad — Every new payment method breaks existing code
+class PaymentProcessor {
+    void process(String type, double amount) {
+        if (type.equals("UPI")) { /* UPI logic */ }
+        else if (type.equals("CREDIT_CARD")) { /* Card logic */ }
+        else if (type.equals("NET_BANKING")) { /* NetBanking */ }
+        // Adding BNPL = you MUST touch this class 🚫 dangerous!
+    }
+}
+✅ Fix — Use interface, add new class for each method
+// The contract — define once, never change
+interface PaymentMethod {
+    void pay(double amount, String userId);
+}
+
+// Each payment type is its own class
+class UPIPayment implements PaymentMethod {
+    public void pay(double amount, String userId) {
+        System.out.println("Paid ₹" + amount + " via UPI");
+    }
+}
+
+class CreditCardPayment implements PaymentMethod {
+    public void pay(double amount, String userId) {
+        System.out.println("Charged ₹" + amount + " on Credit Card");
+    }
+}
+
+// Adding BNPL = just a NEW class, nothing existing is touched ✅
+class BNPLPayment implements PaymentMethod {
+    public void pay(double amount, String userId) {
+        System.out.println("Buy Now Pay Later activated for ₹" + amount);
+    }
+}
+
+// Processor NEVER changes no matter how many methods you add
+class PaymentProcessor {
+    void process(PaymentMethod method, double amount, String userId) {
+        method.pay(amount, userId); // ✅ works with any payment method
+    }
+}
+Interview Line
+"OCP means adding BNPL = new class, NOT modifying PaymentProcessor. We achieve this through interfaces — extend by adding, never by modifying."
+
+L — Liskov Substitution Principle
+The Rule
+"If class B extends class A, then wherever you use A, you should be able to plug in B — and everything should still work. No surprises, no exceptions."
+Think of it as a promise — a child class must keep the promises made by the parent class.
+Real World Analogy
+A Debit Card and Credit Card are both "Cards." You can swipe both at any POS machine. If someone gave you a card that explodes on swipe — that's LSP violation! The machine trusted card-like behaviour.
+Simplest Example First
+class Card {
+    void swipe() { System.out.println("Payment done!"); }
+}
+
+class DebitCard extends Card {
+    void swipe() { System.out.println("₹500 debited!"); } // ✅ keeps the promise
+}
+
+class LockedCard extends Card {
+    void swipe() { throw new Exception("Card is blocked!"); } // 🚫 breaks the machine!
+}
+The vending machine trusted any Card would work on swipe(). LockedCard broke that trust → LSP Violated.
+❌ Bad — FD Account breaks the BankAccount promise
+class BankAccount {
+    double balance;
+    void withdraw(double amount) {  // PROMISE: you can always withdraw
+        balance -= amount;
+        System.out.println("Withdrawn ₹" + amount);
+    }
+}
+
+// Savings keeps the promise ✅
+class SavingsAccount extends BankAccount {
+    void withdraw(double amount) {
+        if (balance >= amount) {
+            balance -= amount;
+            System.out.println("Withdrawn from Savings ₹" + amount);
+        }
+    }
+}
+
+// FD BREAKS the promise 🚫
+class FixedDepositAccount extends BankAccount {
+    void withdraw(double amount) {
+        throw new Exception("Cannot withdraw from FD before maturity!"); // 🚫
+    }
+}
+The problem:
+void processWithdrawal(BankAccount account, double amount) {
+    account.withdraw(amount); // trusts the promise
+}
+
+processWithdrawal(new SavingsAccount(), 500);      // ✅ works
+processWithdrawal(new FixedDepositAccount(), 500); // 💥 BLOWS UP
+✅ Fix — Redesign the hierarchy honestly
+abstract class BankAccount {
+    double balance;
+    void checkBalance() { System.out.println("Balance: ₹" + balance); }
+}
+
+interface Withdrawable {
+    void withdraw(double amount);
+}
+
+// Savings CAN withdraw ✅
+class SavingsAccount extends BankAccount implements Withdrawable {
+    public void withdraw(double amount) {
+        balance -= amount;
+        System.out.println("Withdrawn ₹" + amount);
+    }
+}
+
+// FD CANNOT withdraw — and we don't pretend it can ✅
+class FixedDepositAccount extends BankAccount {
+    void redeemOnMaturity() {
+        System.out.println("FD matured! Credited to your account.");
+    }
+}
+
+// Now this is 100% safe — only Withdrawable accounts allowed
+void processWithdrawal(Withdrawable account, double amount) {
+    account.withdraw(amount); // ✅ no surprises ever
+}
+🧠 Mental Test for LSP
+Ask yourself: "Can I replace the parent with the child everywhere, and will the program still work correctly?"
+* SavingsAccount replaces BankAccount → ✅ Yes
+* FixedDepositAccount replaces BankAccount → ❌ No, throws exception → Fix the hierarchy!
+Interview Line
+"LSP means child classes must honour the contract of the parent. FD Account can't honour withdraw() so it shouldn't extend BankAccount directly. Instead we use a Withdrawable interface only for accounts that actually support it."
+
+I — Interface Segregation Principle
+The Rule
+"Don't force a class to implement methods it will never use."
+Real World Analogy
+A Chef being asked to fix the plumbing. A Developer being asked to call customers. That's ISP violation — your role shouldn't include things you'll never do!
+Simplest Example First — Paytm Employee Roles
+// ❌ FAT interface — one size fits all
+interface PaytmEmployee {
+    void writeCode();      // only developers
+    void designUI();       // only designers
+    void callCustomers();  // only support
+}
+
+// Developer is FORCED to implement things they don't do 🚫
+class Developer implements PaytmEmployee {
+    public void writeCode() { System.out.println("Writing APIs!"); } // ✅
+    public void designUI() { ??? }        // 🚫 I'm a dev, not a designer!
+    public void callCustomers() { ??? }   // 🚫 I'm a dev, not support!
+}
+✅ Fix — Split the interface
+interface Developer    { void writeCode(); }
+interface UIDesigner   { void designUI(); }
+interface SupportAgent { void callCustomers(); }
+
+class BackendDev implements Developer {
+    public void writeCode() { System.out.println("Writing APIs!"); } // ✅ only this
+}
+
+class Designer implements UIDesigner {
+    public void designUI() { System.out.println("Designing screens!"); } // ✅ only this
+}
+Now the Fintech Example — Payment Methods
+// ❌ FAT interface forcing everything on everyone
+interface Payment {
+    void pay();
+    void refund();          // Prepaid card can't refund
+    void convertToEMI();    // UPI doesn't have EMI
+    void splitBill();       // Credit card can't split
+}
+
+// Prepaid Card forced to implement things it can't do 🚫
+class PrepaidCard implements Payment {
+    public void pay() { System.out.println("Paid via Prepaid Card"); }
+    public void refund() { throw new Exception("Can't refund!"); }       // 🚫
+    public void convertToEMI() { throw new Exception("No EMI!"); }       // 🚫
+    public void splitBill() { throw new Exception("Can't split!"); }     // 🚫
+}
+✅ Fix — Small focused interfaces
+interface Payable       { void pay(); }
+interface Refundable    { void refund(); }
+interface EMICapable    { void convertToEMI(); }
+interface BillSplitter  { void splitBill(); }
+
+// UPI — pay, refund, split. NO EMI.
+class UPIPayment implements Payable, Refundable, BillSplitter {
+    public void pay()       { System.out.println("Paid via UPI ✅"); }
+    public void refund()    { System.out.println("Refunded via UPI ✅"); }
+    public void splitBill() { System.out.println("Bill split via UPI ✅"); }
+}
+
+// Credit Card — pay, refund, EMI. NO split.
+class CreditCard implements Payable, Refundable, EMICapable {
+    public void pay()          { System.out.println("Paid via Credit Card ✅"); }
+    public void refund()       { System.out.println("Refunded ✅"); }
+    public void convertToEMI() { System.out.println("Converted to 6 month EMI ✅"); }
+}
+
+// Prepaid Card — ONLY pay. Nothing else.
+class PrepaidCard implements Payable {
+    public void pay() { System.out.println("Paid via Prepaid Card ✅"); }
+}
+🧠 Mental Test for ISP
+"Is any class writing throw new Exception() or leaving a method blank?" If yes → ISP violated → split the interface.
+Interview Line
+"ISP says don't create fat interfaces. UPI doesn't support EMI, Prepaid Card doesn't support refund — so instead of one big Payment interface, we split into Payable, Refundable, EMICapable. Each class implements only what it actually supports."
+
+D — Dependency Inversion Principle
+Understanding the Name First
+"Dependency" = When Class A needs Class B to work → A depends on B.
+class PaymentService {
+    RazorpayGateway gateway = new RazorpayGateway(); // PaymentService DEPENDS on Razorpay
+}
+"Inversion" = Flip / Reverse the relationship.
+// Normal (bad)
+PaymentService  ──directly uses──►  RazorpayGateway
+
+// Inverted (good) — both point to the interface
+PaymentService  ──►  <<Interface>>  ◄──  RazorpayGateway
+The Rule
+"High-level classes should not depend on low-level classes. Both should depend on an abstraction (interface)."
+Real World Analogy — The Shop & Job Description
+You own a shop (PaymentService). You hire Ramesh (RazorpayGateway) directly.
+Shop ──── directly depends on ────► Ramesh
+Problem: Ramesh goes on leave → your shop stops working!
+Solution: Write a Job Description (Interface) instead:
+"Payment Handler must know how to:
+ - collect payment
+ - give receipt"
+Now anyone who fits the job description works — Ramesh, Suresh, or PayU-wala Dinesh.
+Shop ──► Job Description ◄── Ramesh
+              ◄──────────── Suresh
+              ◄──────────── Dinesh
+Your shop never changes. Only the person changes. That's DIP!
+❌ Bad — PaymentService married to Razorpay
+class RazorpayGateway {
+    void makePayment(double amount) {
+        System.out.println("Paying via Razorpay ₹" + amount);
+    }
+}
+
+class PaymentService {
+    RazorpayGateway gateway = new RazorpayGateway(); // 🚫 directly depends on Razorpay
+
+    void pay(double amount) {
+        gateway.makePayment(amount);
+    }
+}
+// Switching to PayU = rewriting PaymentService 🚫 dangerous!
+✅ Fix — Depend on interface, inject from outside
+Step 1 — Create the Job Description (Interface)
+interface PaymentGateway {
+    void makePayment(double amount);
+}
+Step 2 — Anyone who fits the role implements it
+class RazorpayGateway implements PaymentGateway {
+    public void makePayment(double amount) {
+        System.out.println("Paying via Razorpay ₹" + amount); // ✅
+    }
+}
+
+class PayUGateway implements PaymentGateway {
+    public void makePayment(double amount) {
+        System.out.println("Paying via PayU ₹" + amount); // ✅
+    }
+}
+
+class StripeGateway implements PaymentGateway { // new gateway — nothing else changes ✅
+    public void makePayment(double amount) {
+        System.out.println("Paying via Stripe ₹" + amount);
+    }
+}
+Step 3 — PaymentService only knows the interface
+class PaymentService {
+    PaymentGateway gateway; // 👈 interface, NOT RazorpayGateway
+
+    // Gateway injected from outside — this is called Dependency Injection
+    PaymentService(PaymentGateway gateway) {
+        this.gateway = gateway;
+    }
+
+    void pay(double amount) {
+        gateway.makePayment(amount); // works with ANY gateway ✅
+    }
+}
+Step 4 — Swap freely, zero changes inside PaymentService
+PaymentService s1 = new PaymentService(new RazorpayGateway());
+s1.pay(500); // "Paying via Razorpay ₹500"
+
+PaymentService s2 = new PaymentService(new PayUGateway()); // ✅ zero change in PaymentService
+s2.pay(500); // "Paying via PayU ₹500"
+DIP vs DI — Interviewers Love This!
+Term	What it means
+DIP	The principle — depend on abstractions, not concrete classes
+DI (Dependency Injection)	The technique — pass the dependency from outside
+Spring IoC	The framework that does DI automatically for you
+Interview Line
+"DIP means PaymentService should not hardcode RazorpayGateway. Instead both depend on PaymentGateway interface. Switching from Razorpay to PayU requires zero changes in PaymentService — you just inject a different gateway. This is exactly what Spring does with @Autowired."
+
+🗺️ The Full Picture — One System, All 5 Principles
+User pays ₹10,000 via Credit Card on Paytm
+              │
+              ▼
+      PaymentService                     ← D: depends on PaymentGateway interface
+              │                               not on RazorpayGateway directly
+              ├──► PaymentProcessor      ← S: only processes payment
+              │         │
+              │         ├── UPIPayment          ← O: new method = new class, no existing change
+              │         ├── CreditCardPayment   ← O: same
+              │         └── BNPLPayment         ← O: just added, nothing modified
+              │
+              ├──► PaymentRepository     ← S: only saves to DB
+              │
+              ├──► NotificationService   ← S: only sends SMS/Email
+              │
+              ├──► FraudDetectionService ← S: only checks fraud
+              │
+              ├── SavingsAccount / FDAccount  ← L: FD doesn't fake withdraw()
+              │
+              └── UPI, CreditCard, PrepaidCard ← I: each implements only what it supports
+
+🎯 Master Cheat Sheet
+Principle	One-Line Rule	Fintech Example	Mental Test
+SRP	One class, one job	PaymentProcessor only processes, never sends SMS	"How many reasons can this class change?"
+OCP	Add don't modify	New payment = new class, not if-else in processor	"Did I touch existing code to add this?"
+LSP	Child keeps parent's promise	FDAccount doesn't fake withdraw()	"Can child replace parent without surprises?"
+ISP	No fat interfaces	PrepaidCard only implements Payable, not EMICapable	"Is any method throwing empty exception?"
+DIP	Depend on interface, not class	PaymentService uses PaymentGateway, not RazorpayGateway	"Can I swap the dependency without touching this class?"
+Ready for Design Patterns? Start with Strategy Pattern — it's literally OCP + DIP working together and comes up in almost every fintech LLD interview! 🚀
+
+
+
+
+Dependency Injection in Spring Boot
+Complete Notes — Interview Ready 🎯
+
+What is Dependency Injection (DI)?
+"Instead of a class creating its own dependencies, someone else creates and provides them."
+The "someone else" in Spring Boot = Spring IoC Container (Application Context).
+
+The Problem — Without DI
+Scenario: PaymentService needs FraudDetectionService
+// ❌ WITHOUT DI — class creates its own dependencies
+
+public class PaymentService {
+
+    // Directly creating dependency inside the class
+    private FraudDetectionService fraudService = new FraudDetectionService();
+    private NotificationService notificationService = new NotificationService();
+    private PaymentRepository repository = new PaymentRepository();
+
+    public void processPayment(String userId, double amount) {
+        fraudService.check(userId, amount);
+        repository.save(userId, amount);
+        notificationService.notify(userId);
+    }
+}
+What Goes Wrong? — 5 Real Problems
+
+Problem 1: Tight Coupling 🔗
+// PaymentService is MARRIED to FraudDetectionService
+private FraudDetectionService fraudService = new FraudDetectionService();
+
+// Tomorrow your team says: "Use MLFraudDetectionService instead"
+// You have to OPEN PaymentService and change it 🚫
+// What if PaymentService is used in 50 other places?
+Result: One change = modify many files. High risk of bugs.
+
+Problem 2: Cannot Test Properly 🧪
+// ❌ Without DI — you CANNOT mock FraudDetectionService in unit tests
+
+public class PaymentService {
+    private FraudDetectionService fraudService = new FraudDetectionService();
+    // This always creates a REAL FraudDetectionService
+    // Real service might call actual DB, actual APIs
+    // Your unit test becomes an integration test 🚫
+}
+
+// Unit test becomes impossible to isolate
+@Test
+void testPayment() {
+    PaymentService service = new PaymentService();
+    // FraudDetectionService will hit REAL database 🚫
+    // Test is slow, unreliable, environment-dependent
+}
+Result: Unit tests become impossible. Every test hits real DB/APIs.
+
+Problem 3: Object Created Every Time (Memory Waste) 💾
+// ❌ Every time PaymentService is created, it creates 3 new objects
+
+PaymentService s1 = new PaymentService();
+// Creates: new FraudDetectionService + new NotificationService + new PaymentRepository
+
+PaymentService s2 = new PaymentService();
+// Creates: ANOTHER FraudDetectionService + ANOTHER NotificationService + ANOTHER PaymentRepository
+
+// In a real app with 1000 requests/sec = 3000 unnecessary objects/sec 🚫
+Result: Memory leaks, performance issues, connection pool exhaustion.
+
+Problem 4: Cascading Constructor Nightmare 😱
+// What if FraudDetectionService itself needs dependencies?
+
+public class FraudDetectionService {
+    private MLModelService mlModel = new MLModelService();
+    private RiskScoreRepository riskRepo = new RiskScoreRepository();
+}
+
+// And MLModelService needs dependencies?
+public class MLModelService {
+    private DatabaseConnection db = new DatabaseConnection();
+    private CacheService cache = new CacheService();
+}
+
+// Now PaymentService indirectly creates 6+ objects
+// You have NO control, NO visibility into this chain 🚫
+Result: Uncontrollable object creation chains. Hard to debug.
+
+Problem 5: Cannot Swap Implementations 🔄
+// ❌ What if you want different fraud services for different environments?
+// DEV  → MockFraudService (fast, no real calls)
+// PROD → RealFraudService (actual ML model)
+
+public class PaymentService {
+    // Hardcoded — same in DEV and PROD 🚫
+    private FraudDetectionService fraudService = new FraudDetectionService();
+}
+Result: Same implementation in all environments. Cannot configure per environment.
+
+The Solution — With Dependency Injection ✅
+// ✅ WITH DI — Spring creates and injects dependencies
+
+@Service
+public class PaymentService {
+
+    // Just DECLARE what you need — don't create it
+    private final FraudDetectionService fraudService;
+    private final NotificationService notificationService;
+    private final PaymentRepository repository;
+
+    // Spring PROVIDES them through constructor
+    @Autowired
+    public PaymentService(FraudDetectionService fraudService,
+                          NotificationService notificationService,
+                          PaymentRepository repository) {
+        this.fraudService = fraudService;
+        this.notificationService = notificationService;
+        this.repository = repository;
+    }
+
+    public void processPayment(String userId, double amount) {
+        fraudService.check(userId, amount);
+        repository.save(userId, amount);
+        notificationService.notify(userId);
+    }
+}
+
+How Spring DI Fixes All 5 Problems
+Fix 1: Loose Coupling ✅
+// Use interface, not concrete class
+private final FraudDetectionService fraudService; // interface
+
+// Tomorrow switch to ML version?
+// Just change ONE config — PaymentService untouched ✅
+@Bean
+public FraudDetectionService fraudDetectionService() {
+    return new MLFraudDetectionService(); // swap here, nowhere else
+}
+
+Fix 2: Easy Unit Testing ✅
+// With DI — you can INJECT a mock in tests
+@Test
+void testPayment() {
+    // Create a fake fraud service — no DB, no APIs
+    FraudDetectionService mockFraud = Mockito.mock(FraudDetectionService.class);
+    NotificationService mockNotif = Mockito.mock(NotificationService.class);
+    PaymentRepository mockRepo = Mockito.mock(PaymentRepository.class);
+
+    // Inject mocks into PaymentService
+    PaymentService service = new PaymentService(mockFraud, mockNotif, mockRepo);
+
+    // Now test purely — no real DB, no real APIs ✅
+    service.processPayment("user123", 500);
+
+    Mockito.verify(mockFraud).check("user123", 500); // verify mock was called
+}
+
+Fix 3: Singleton — One Object, Shared Everywhere ✅
+// Spring creates ONE instance of each @Service and reuses it
+@Service // Singleton by default
+public class FraudDetectionService { }
+
+// Request 1 → Spring injects SAME FraudDetectionService instance
+// Request 2 → Spring injects SAME FraudDetectionService instance
+// Request 1000 → Spring injects SAME FraudDetectionService instance
+
+// Result: No memory waste, connection pools work correctly ✅
+
+Fix 4: Spring Manages the Entire Object Graph ✅
+// Spring figures out the entire dependency chain automatically
+
+// You just declare:
+@Service public class PaymentService {
+    PaymentService(FraudDetectionService f) { }
+}
+
+@Service public class FraudDetectionService {
+    FraudDetectionService(MLModelService m, RiskScoreRepository r) { }
+}
+
+@Service public class MLModelService {
+    MLModelService(DatabaseConnection db, CacheService c) { }
+}
+
+// Spring auto-creates in correct order:
+// 1. DatabaseConnection
+// 2. CacheService
+// 3. MLModelService (needs 1 & 2)
+// 4. RiskScoreRepository
+// 5. FraudDetectionService (needs 3 & 4)
+// 6. PaymentService (needs 5) ✅
+
+Fix 5: Swap Implementations Per Environment ✅
+// application-dev.properties
+fraud.service=mock
+
+// application-prod.properties
+fraud.service=real
+
+// Config class
+@Configuration
+public class FraudConfig {
+
+    @Value("${fraud.service}")
+    private String fraudServiceType;
+
+    @Bean
+    public FraudDetectionService fraudDetectionService() {
+        if (fraudServiceType.equals("mock")) {
+            return new MockFraudDetectionService(); // DEV
+        }
+        return new RealFraudDetectionService(); // PROD ✅
+    }
+}
+
+The Strategy Pattern + DI Example (Full Picture)
+// Interface — the contract
+public interface PaymentStrategy {
+    void pay(double amount, String userId);
+}
+
+// Implementations — Spring registers each as a bean
+@Component("upi")
+public class UPIPaymentStrategy implements PaymentStrategy {
+    public void pay(double amount, String userId) {
+        System.out.println("UPI: ₹" + amount + " paid by " + userId);
+    }
+}
+
+@Component("card")
+public class CardPaymentStrategy implements PaymentStrategy {
+    public void pay(double amount, String userId) {
+        System.out.println("Card: ₹" + amount + " charged to " + userId);
+    }
+}
+
+@Component("wallet")
+public class WalletPaymentStrategy implements PaymentStrategy {
+    public void pay(double amount, String userId) {
+        System.out.println("Wallet: ₹" + amount + " debited from " + userId);
+    }
+}
+
+// PaymentService — Spring injects ALL strategies automatically
+@Service
+public class PaymentService {
+
+    private final Map<String, PaymentStrategy> strategies;
+
+    @Autowired
+    public PaymentService(Map<String, PaymentStrategy> strategies) {
+        // Spring builds this map automatically:
+        // Step 1: Scans all @Component classes
+        // Step 2: Finds all that implement PaymentStrategy
+        // Step 3: Creates map → { "upi" → UPI bean, "card" → Card bean, "wallet" → Wallet bean }
+        // Step 4: Injects this map into PaymentService constructor
+        this.strategies = strategies;
+    }
+
+    public void processPayment(String type, double amount, String userId) {
+        PaymentStrategy strategy = strategies.get(type);
+        if (strategy == null) {
+            throw new IllegalArgumentException("Unknown payment type: " + type);
+        }
+        strategy.pay(amount, userId);
+    }
+}
+What Happens Inside Spring Step by Step
+App Startup
+    │
+    ▼
+Spring scans com.one97.* (your @ComponentScan)
+    │
+    ├── Finds @Component("upi")    → creates UPIPaymentStrategy bean
+    ├── Finds @Component("card")   → creates CardPaymentStrategy bean
+    ├── Finds @Component("wallet") → creates WalletPaymentStrategy bean
+    └── Finds @Service             → needs to create PaymentService bean
+              │
+              ▼
+         Constructor needs Map<String, PaymentStrategy>
+              │
+              ▼
+         Spring looks in Application Context:
+         "Who implements PaymentStrategy?"
+              │
+              ├── UPIPaymentStrategy (name="upi")    ✅
+              ├── CardPaymentStrategy (name="card")  ✅
+              └── WalletPaymentStrategy (name="wallet") ✅
+              │
+              ▼
+         Builds Map:
+         { "upi" → UPI bean, "card" → Card bean, "wallet" → Wallet bean }
+              │
+              ▼
+         Injects into PaymentService constructor ✅
+              │
+              ▼
+         PaymentService bean is ready!
+
+3 Types of Dependency Injection in Spring
+1. Constructor Injection (RECOMMENDED ✅)
+@Service
+public class PaymentService {
+    private final FraudDetectionService fraudService;
+
+    @Autowired // optional in newer Spring versions
+    public PaymentService(FraudDetectionService fraudService) {
+        this.fraudService = fraudService;
+    }
+}
+Why best:
+* Dependencies are final — immutable, thread-safe
+* Fail-fast — app won't start if dependency is missing
+* Easy to unit test — just pass mock in constructor
+
+2. Field Injection (Common but NOT recommended)
+@Service
+public class PaymentService {
+
+    @Autowired // Spring injects directly into field via reflection
+    private FraudDetectionService fraudService;
+}
+Why avoid:
+* Cannot make field final
+* Hard to unit test — can't inject mock without Spring
+* Hides dependencies — not obvious what class needs
+
+3. Setter Injection (For optional dependencies)
+@Service
+public class PaymentService {
+    private FraudDetectionService fraudService;
+
+    @Autowired(required = false) // optional dependency
+    public void setFraudService(FraudDetectionService fraudService) {
+        this.fraudService = fraudService;
+    }
+}
+When to use: Only for optional dependencies that have a default fallback.
+
+DI vs IoC — Know the Difference
+Term	Full Form	Meaning
+DI	Dependency Injection	How dependencies are provided (constructor/field/setter)
+IoC	Inversion of Control	You don't control object creation — Spring does
+IoC Container	—	Spring's ApplicationContext that manages all beans
+DI is how IoC is implemented in Spring.
+
+Quick Cheat Sheet
+Without DI	With DI (Spring)
+new FraudService() inside class	Spring injects FraudService
+Tight coupling	Loose coupling via interfaces
+Hard to unit test	Easy to mock and test
+New object every time	Singleton — one shared instance
+Cannot swap implementations	Swap via config/properties
+Manual dependency chain	Spring manages entire graph
+Interview One-Liner
+"Without DI, classes create their own dependencies using new — this causes tight coupling, makes unit testing impossible, wastes memory, and makes swapping implementations hard. Spring's DI inverts this control — Spring creates and injects dependencies. This gives us loose coupling via interfaces, easy mocking in tests, singleton beans for memory efficiency, and the ability to swap implementations via config. In our Paytm payment system, PaymentService doesn't create FraudDetectionService — Spring injects it. This means in tests, we inject a mock; in prod, Spring injects the real one."
+
+Singleton vs Prototype — Complete Notes
+
+The Only Question to Ask
+Does this class store USER-SPECIFIC data in CLASS-LEVEL FIELDS?
+
+         YES → @Scope("prototype")
+         NO  → Singleton (default) ✅
+
+PART 1 — What is Singleton?
+One object created ONCE, shared by EVERYONE, lives for entire app lifetime.
+@Service  // Singleton by default — Spring creates ONE instance ✅
+public class PaymentService {
+    // No user-specific fields
+    // Just repos and logic
+}
+App starts → Spring creates ONE PaymentService object → stored in memory forever
+
+Request 1 (Anubhav) ──────┐
+Request 2 (Rahul)   ───────┼──► [ Same PaymentService Object ]
+Request 3 (Vikram)  ──────┘
+Safe because: PaymentService has NO user-specific fields. It just has tools (repos) and logic.
+
+PART 2 — What is Prototype?
+New object created for EVERY request/injection. Each user gets their OWN copy.
+@Service
+@Scope("prototype") // Fresh object every time
+public class PaymentReceiptGenerator {
+    private String userId;   // user-specific field
+    private double amount;   // user-specific field
+}
+Request 1 (Anubhav) ──► [ PaymentReceiptGenerator A ]  userId="Anubhav", amount=500
+Request 2 (Rahul)   ──► [ PaymentReceiptGenerator B ]  userId="Rahul",   amount=10000
+Request 3 (Vikram)  ──► [ PaymentReceiptGenerator C ]  userId="Vikram",  amount=2000
+
+3 requests = 3 separate objects = zero conflict ✅
+
+PART 3 — Why Anubhav Gets Rahul's Receipt 💥
+The Code (Wrong — Singleton with State)
+@Service  // SINGLETON — ONE shared object 🚫
+public class PaymentReceiptGenerator {
+
+    // CLASS-LEVEL FIELDS — stored in SHARED memory
+    private String userId;
+    private double amount;
+    private String transactionId;
+
+    public void setDetails(String userId, double amount, String txnId) {
+        this.userId = userId;           // WRITES to shared memory
+        this.amount = amount;           // WRITES to shared memory
+        this.transactionId = txnId;     // WRITES to shared memory
+    }
+
+    public String generateReceipt() {
+        // READS from shared memory
+        return "Receipt: " + userId + " ₹" + amount + " | TxnId: " + transactionId;
+    }
+}
+
+Step 1 — What the Object Looks Like at App Start
+JVM Memory (Heap)
+┌─────────────────────────────────────────┐
+│      PaymentReceiptGenerator Object     │
+│         (ONE object, shared by ALL)     │
+│                                         │
+│   userId        = null                  │
+│   amount        = 0.0                   │
+│   transactionId = null                  │
+│                                         │
+└─────────────────────────────────────────┘
+
+This ONE object is shared by every single request.
+Everyone reads from and writes to THIS SAME object.
+
+Step 2 — Anubhav's Request Arrives (Time: 0ms)
+Anubhav calls: setDetails("Anubhav", 500, "TXN001")
+
+JVM Memory (Heap)
+┌─────────────────────────────────────────┐
+│      PaymentReceiptGenerator Object     │
+│                                         │
+│   userId        = "Anubhav"            │  ← Anubhav wrote this
+│   amount        = 500                  │  ← Anubhav wrote this
+│   transactionId = "TXN001"             │  ← Anubhav wrote this
+│                                         │
+└─────────────────────────────────────────┘
+
+✅ Looks correct so far...
+
+Step 3 — Rahul's Request Arrives (Time: 5ms)
+Anubhav's thread is STILL running (waiting for PDF/DB)
+Rahul calls: setDetails("Rahul", 10000, "TXN002")
+
+JVM Memory (Heap)
+┌─────────────────────────────────────────┐
+│      PaymentReceiptGenerator Object     │
+│                                         │
+│   userId        = "Rahul"              │  ← Rahul OVERWROTE Anubhav! 💥
+│   amount        = 10000                │  ← Rahul OVERWROTE Anubhav! 💥
+│   transactionId = "TXN002"             │  ← Rahul OVERWROTE Anubhav! 💥
+│                                         │
+└─────────────────────────────────────────┘
+
+Anubhav's data is GONE from the object.
+But Anubhav's thread is still running and doesn't know this!
+
+Step 4 — Anubhav Calls generateReceipt() (Time: 10ms)
+Anubhav calls: generateReceipt()
+Reads from the SAME shared object...
+
+JVM Memory (Heap)
+┌─────────────────────────────────────────┐
+│      PaymentReceiptGenerator Object     │
+│                                         │
+│   userId        = "Rahul"              │  ← Anubhav reads THIS 💥
+│   amount        = 10000                │  ← Anubhav reads THIS 💥
+│   transactionId = "TXN002"             │  ← Anubhav reads THIS 💥
+│                                         │
+└─────────────────────────────────────────┘
+
+Anubhav gets: "Receipt: Rahul ₹10000 | TxnId: TXN002"
+
+💥 ANUBHAV GETS RAHUL'S RECEIPT!
+💥 DATA LEAK BETWEEN USERS!
+💥 IN FINTECH — THIS IS A CRITICAL PRODUCTION BUG!
+
+The Thread Picture — Why This Happens
+Anubhav's Thread          SHARED OBJECT (Heap)          Rahul's Thread
+      │                  ┌──────────────────┐                 │
+      │                  │ userId = null    │                 │
+      │                  │ amount = 0       │                 │
+      │                  └──────────────────┘                 │
+      │                           │                           │
+      │── setDetails("Anubhav") ─►│                           │
+      │                  ┌──────────────────┐                 │
+      │                  │ userId="Anubhav" │                 │
+      │                  │ amount=500       │                 │
+      │                  └──────────────────┘                 │
+      │                           │                           │
+      │  (waiting for PDF gen)    │◄── setDetails("Rahul") ───│
+      │                  ┌──────────────────┐                 │
+      │                  │ userId="Rahul"   │  ← OVERWRITTEN  │
+      │                  │ amount=10000     │                 │
+      │                  └──────────────────┘                 │
+      │                           │                           │
+      │── generateReceipt() ─────►│                           │
+      │                           │                           │
+      │◄── "Rahul ₹10000" ────────│                           │
+      │                                                       │
+   WRONG! 💥                                              CORRECT ✅
+Root Cause: Both threads write to and read from the SAME memory location. No lock, no isolation — last writer wins.
+
+Prove It With Code
+public class Demo {
+    public static void main(String[] args) throws InterruptedException {
+
+        // ONE shared singleton object
+        PaymentReceiptGenerator generator = new PaymentReceiptGenerator();
+
+        // Anubhav's thread
+        Thread anubhavThread = new Thread(() -> {
+            generator.setDetails("Anubhav", 500, "TXN001");
+
+            // Simulate processing time (DB call, PDF generation)
+            try { Thread.sleep(10); } catch (Exception e) {}
+
+            // By now Rahul has already overwritten the data!
+            String receipt = generator.generateReceipt();
+            System.out.println("Anubhav's receipt: " + receipt);
+            // PRINTS: "Anubhav's receipt: Receipt: Rahul ₹10000" 💥
+        });
+
+        // Rahul's thread — starts 5ms after Anubhav
+        Thread rahulThread = new Thread(() -> {
+            try { Thread.sleep(5); } catch (Exception e) {}
+
+            generator.setDetails("Rahul", 10000, "TXN002");
+            String receipt = generator.generateReceipt();
+            System.out.println("Rahul's receipt: " + receipt);
+            // PRINTS: "Rahul's receipt: Receipt: Rahul ₹10000" ✅
+        });
+
+        anubhavThread.start();
+        rahulThread.start();
+    }
+}
+
+// ACTUAL OUTPUT:
+// Anubhav's receipt: Receipt: Rahul ₹10000 TxnId: TXN002  💥 WRONG!
+// Rahul's receipt:   Receipt: Rahul ₹10000 TxnId: TXN002  ✅ Correct
+
+PART 4 — The Fix: @Scope("prototype")
+@Service
+@Scope("prototype")  // NEW object for every request ✅
+public class PaymentReceiptGenerator {
+    private String userId;
+    private double amount;
+    private String transactionId;
+
+    public void setDetails(String userId, double amount, String txnId) {
+        this.userId = userId;
+        this.amount = amount;
+        this.transactionId = txnId;
+    }
+
+    public String generateReceipt() {
+        return "Receipt: " + userId + " ₹" + amount + " | TxnId: " + transactionId;
+    }
+}
+What Memory Looks Like Now
+JVM Memory (Heap) — WITH PROTOTYPE
+
+Anubhav's Request                    Rahul's Request
+┌───────────────────────┐           ┌───────────────────────┐
+│ PaymentReceiptGen_A   │           │ PaymentReceiptGen_B   │
+│  userId = "Anubhav"  │           │  userId = "Rahul"     │
+│  amount = 500         │           │  amount = 10000       │
+│  txnId  = "TXN001"   │           │  txnId  = "TXN002"   │
+└───────────────────────┘           └───────────────────────┘
+   Anubhav's OWN object ✅             Rahul's OWN object ✅
+
+Rahul CANNOT touch Anubhav's object.
+Anubhav CANNOT touch Rahul's object.
+Each reads their OWN data. ✅
+
+PART 5 — Correct Way to Use Prototype in Spring
+❌ Wrong — Prototype injected into Singleton
+@Service
+public class PaymentService {
+
+    @Autowired
+    private PaymentReceiptGenerator generator;
+    // Spring injects this ONCE at startup
+    // Same instance reused forever → acts like Singleton 🚫
+    // @Scope("prototype") has NO EFFECT here!
+}
+✅ Correct — Get fresh instance via ApplicationContext
+@Service
+public class PaymentService {
+
+    @Autowired
+    private ApplicationContext context; // inject Spring container itself
+
+    public void processPayment(String userId, double amount, String txnId) {
+        // Fresh NEW instance every single time ✅
+        PaymentReceiptGenerator generator =
+            context.getBean(PaymentReceiptGenerator.class);
+
+        generator.setDetails(userId, amount, txnId);
+        String receipt = generator.generateReceipt();
+        System.out.println(receipt);
+    }
+}
+
+PART 6 — Why Your SpinTheWheelService is Safe
+// SpinTheWheelService — Singleton ✅ CORRECT
+public ResponseEntity<ResponseDTO> getGameDetails(PlayGamePayload payload) {
+
+    // ALL data stored in LOCAL VARIABLES — not class fields
+    Optional<GameEligibility> gameEligibilityOptional =     // LOCAL ✅
+        gameEligibilityRepository.findById(payload.getGameEligibilityId());
+
+    GameEligibility gameEligibility =                       // LOCAL ✅
+        gameEligibilityOptional.get();
+
+    Optional<SpinTheWheelUserRecord> spinTheWheelUserRecordOptional = // LOCAL ✅
+        spinTheWheelUserRecordRepository.findByGameEligibilityId(id);
+
+    SpinTheWheelUserRecord spinTheWheelUserRecord =         // LOCAL ✅
+        spinTheWheelUserRecordOptional.get();
+
+    return composeResponse.compose(HttpStatus.OK, ...);
+    // Method ends → ALL variables gone from thread stack ✅
+    // Service remembers NOTHING → Singleton is SAFE ✅
+}
+JVM Memory — SpinTheWheelService (Singleton)
+
+HEAP (shared)                         THREAD STACKS (private per thread)
+┌────────────────────────┐
+│  SpinTheWheelService   │            ┌──────────────────────────────┐
+│  (singleton)           │            │  Anubhav's Stack             │
+│                        │            │  gameEligibility = A's data  │
+│  gameRepo    ──────────┼──────┐     │  record          = A's record│
+│  configRepo  ──────────┼────┐ │     └──────────────────────────────┘
+│  recordRepo  ──────────┼──┐ │ │
+└────────────────────────┘  │ │ │     ┌──────────────────────────────┐
+                            │ │ │     │  Rahul's Stack               │
+                            └─┼─┼────►│  gameEligibility = B's data  │
+                              └─┘     │  record          = B's record│
+                                      └──────────────────────────────┘
+
+Repos are shared safely (they have no user data) ✅
+Local variables are on private thread stacks — NEVER shared ✅
+Rahul CANNOT see Anubhav's local variables ✅
+
+PART 7 — Heap vs Stack Memory (The Root Concept)
+┌─────────────────────────────────────────────────────────┐
+│                    JVM MEMORY                           │
+│                                                         │
+│  HEAP (Shared between ALL threads)                      │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │ • All objects created with "new" live here       │   │
+│  │ • Singleton beans live here                      │   │
+│  │ • Class-level fields live here                   │   │
+│  │ • DANGER: if user data stored here               │   │
+│  └──────────────────────────────────────────────────┘   │
+│                                                         │
+│  STACK (Private per thread — each thread has its own)   │
+│  ┌────────────────┐  ┌────────────────┐                 │
+│  │ Thread A Stack │  │ Thread B Stack │                 │
+│  │ local var a=1  │  │ local var a=5  │  ← DIFFERENT!  │
+│  │ local var b=X  │  │ local var b=Y  │  ← ISOLATED!   │
+│  └────────────────┘  └────────────────┘                 │
+│  Thread A CANNOT read Thread B's stack. Ever.           │
+└─────────────────────────────────────────────────────────┘
+
+PART 8 — Full Decision Table
+Class	Has Class-Level User State?	Scope	Reason
+PaymentService	❌ No	Singleton	Just calls repos, no user data stored
+FraudDetectionService	❌ No	Singleton	Just checks rules, no user data
+SpinTheWheelService	❌ No	Singleton	All data in local variables
+NotificationService	❌ No	Singleton	Just sends messages, no state
+GameEligibilityRepository	❌ No	Singleton	Just DB calls, no state
+PaymentReceiptGenerator	✅ Yes	Prototype	Stores userId, amount, txnId in fields
+LoanApplicationBuilder	✅ Yes	Prototype	Stores applicant details in fields
+UserCartBuilder	✅ Yes	Prototype	Stores cart items per user
+PDFStatementGenerator	✅ Yes	Prototype	Stores statement data per user
+FINAL — 3 Golden Rules
+RULE 1:
+Class fields  = Heap memory  = SHARED between threads
+               → DANGEROUS if storing user-specific data
+               → Use @Scope("prototype")
+
+RULE 2:
+Local variables = Stack memory = PRIVATE per thread
+                → ALWAYS safe, automatically isolated
+                → Singleton is fine
+
+RULE 3:
+Stateless class  (only repos/tools injected, all data local) = Singleton
+Stateful class   (stores user data in fields)                = Prototype
+
+Interview Line
+"Singleton is safe when a class is stateless — all user data lives in local variables on the thread stack, which is private per thread. SpinTheWheelService is safe as singleton because gameEligibility and spinTheWheelUserRecord are local variables — not class fields. Prototype is needed when a class stores user-specific data as class-level fields. Without prototype, two concurrent users share the same object — last writer wins — causing Anubhav to get Rahul's receipt. In fintech, this is a critical data leak bug."
+
+
+
+Revice :
+
+
+Design Patterns — Complete Guide 🚀
+Correct Sequence: Creational → Structural → Behavioral
+
+🏗️ CREATIONAL PATTERNS
+How objects are CREATED
+
+1️⃣ Singleton Pattern
+Rule
+"Only ONE instance of a class exists in the entire application."
+Simple Analogy
+Your company has one database connection pool. Every request uses the same pool — you don't create a new pool for every request. That would be insane.
+❌ Bad — New object every time
+public class PaymentService {
+    public void pay(double amount) {
+        // Creates new DB connection every time 🚫
+        DatabaseConnection conn = new DatabaseConnection();
+        conn.execute("INSERT INTO payments...");
+    }
+}
+// 1000 requests = 1000 DB connections = app crashes 🚫
+✅ Good — Pure Java Singleton
+public class DatabaseConnection {
+    private static DatabaseConnection instance;
+
+    private DatabaseConnection() {
+        System.out.println("DB Connected!"); // runs ONCE
+    }
+
+    public static synchronized DatabaseConnection getInstance() {
+        if (instance == null) {
+            instance = new DatabaseConnection();
+        }
+        return instance; // always returns SAME object
+    }
+}
+
+// Proof
+DatabaseConnection c1 = DatabaseConnection.getInstance();
+DatabaseConnection c2 = DatabaseConnection.getInstance();
+System.out.println(c1 == c2); // true ✅ same object
+🌱 Spring Boot — Singleton is DEFAULT
+@Service     // ONE instance → Singleton ✅
+public class PaymentService { }
+
+@Repository  // ONE instance → Singleton ✅
+public class PaymentRepository { }
+
+@Component   // ONE instance → Singleton ✅
+public class FraudDetectionService { }
+Interview Line
+"Spring creates every @Service, @Repository, @Component as a Singleton by default. One instance shared across all requests — saves memory, improves performance."
+
+2️⃣ Factory Pattern
+Rule
+"Let a Factory decide WHICH object to create. Don't use new directly in business logic."
+Simple Analogy
+You don't build your own Debit Card. You tell the bank — "I want a Platinum Card" — the Card Factory creates it. You don't care how it's made.
+❌ Bad — Business logic decides creation
+public class PaymentService {
+    public void pay(String type, double amount) {
+        PaymentMethod method;
+
+        // Business logic polluted with creation logic 🚫
+        if (type.equals("UPI"))  method = new UPIPayment();
+        else if (type.equals("CARD")) method = new CardPayment();
+        else if (type.equals("WALLET")) method = new WalletPayment();
+        // Adding BNPL = touch this class 🚫
+
+        method.pay(amount);
+    }
+}
+✅ Good — Factory handles creation
+interface PaymentMethod { void pay(double amount); }
+
+class UPIPayment    implements PaymentMethod {
+    public void pay(double amount) { System.out.println("UPI ₹" + amount); }
+}
+class CardPayment   implements PaymentMethod {
+    public void pay(double amount) { System.out.println("Card ₹" + amount); }
+}
+class WalletPayment implements PaymentMethod {
+    public void pay(double amount) { System.out.println("Wallet ₹" + amount); }
+}
+
+// Factory — ONE place responsible for creation
+public class PaymentMethodFactory {
+    public static PaymentMethod create(String type) {
+        switch (type) {
+            case "UPI":    return new UPIPayment();
+            case "CARD":   return new CardPayment();
+            case "WALLET": return new WalletPayment();
+            default: throw new IllegalArgumentException("Unknown: " + type);
+        }
+    }
+}
+
+// Business logic is CLEAN — no new, no if-else
+public class PaymentService {
+    public void pay(String type, double amount) {
+        PaymentMethod method = PaymentMethodFactory.create(type); // ✅
+        method.pay(amount);
+    }
+}
+🌱 Spring Boot Version
+@Configuration
+public class PaymentConfig {
+    @Bean // This is a Factory! ✅
+    public Map<String, PaymentMethod> paymentFactory() {
+        Map<String, PaymentMethod> factory = new HashMap<>();
+        factory.put("UPI",    new UPIPayment());
+        factory.put("CARD",   new CardPayment());
+        factory.put("WALLET", new WalletPayment());
+        return factory;
+    }
+}
+Interview Line
+"@Configuration with @Bean methods is Factory Pattern in Spring. The config class decides what to create and how — business logic just asks for the object."
+
+3️⃣ Builder Pattern
+Rule
+"Build complex objects step by step. No more giant constructors."
+Simple Analogy
+Filling a Loan Application — you fill it step by step: personal details → income → collateral → guarantor. You don't dump everything in at once.
+❌ Bad — Too many constructor params
+// What is true? What is 50000? NO IDEA without docs 🚫
+Transaction t = new Transaction(
+    "TXN001", "user123", 50000, "UPI", "SUCCESS", true, false, "INR"
+);
+✅ Good — Builder Pattern
+Transaction txn = new Transaction.Builder()
+    .txnId("TXN001")
+    .userId("user123")
+    .amount(50000)
+    .paymentMethod("UPI")
+    .status("SUCCESS")
+    .currency("INR")
+    .build(); // ✅ readable, self-explanatory
+🌱 Spring Boot — Lombok @Builder (Real World!)
+@Data
+@Builder
+@Entity
+public class Transaction {
+    private String txnId;
+    private String userId;
+    private double amount;
+    private String paymentMethod;
+    private String status;
+
+    @Builder.Default
+    private String currency = "INR"; // default value
+}
+
+// Usage — zero boilerplate ✅
+Transaction txn = Transaction.builder()
+    .txnId("TXN001")
+    .userId("user123")
+    .amount(50000)
+    .build();
+
+// ResponseEntity in Spring IS Builder Pattern!
+return ResponseEntity
+    .status(HttpStatus.OK)
+    .header("X-Request-Id", "abc")
+    .body(response); // ✅
+Interview Line
+"Builder Pattern for Transaction — many optional fields, readable creation. Lombok's @Builder handles all boilerplate. ResponseEntity.status().header().body() is Spring's own Builder."
+
+🔗 STRUCTURAL PATTERNS
+How objects are CONNECTED and WRAPPED
+
+4️⃣ Proxy Pattern
+Rule
+"A Proxy sits in front of an object and controls access to it — adds extra behaviour without changing the original."
+Simple Analogy
+A bank manager's secretary. You don't go directly to the manager. The secretary first checks: "Do you have an appointment? Are you authorized?" — then lets you in. The manager doesn't change. The secretary adds the checking.
+Without Proxy:   You ──────────────────────────► Manager
+With Proxy:      You ──► Secretary (checks) ────► Manager
+❌ Bad — Direct call, no control
+public class PaymentService {
+    public void processPayment(double amount) {
+        // No logging, no security check, no caching 🚫
+        System.out.println("Payment of ₹" + amount + " processed");
+    }
+}
+✅ Good — Proxy adds behaviour
+// Real object — pure business logic
+public class PaymentService {
+    public void processPayment(double amount) {
+        System.out.println("Payment of ₹" + amount + " processed");
+    }
+}
+
+// Proxy — wraps PaymentService, adds extra behaviour
+public class PaymentServiceProxy {
+    private PaymentService realService = new PaymentService();
+
+    public void processPayment(double amount) {
+
+        // BEFORE — added by proxy
+        System.out.println("LOG: Payment started for ₹" + amount);
+        System.out.println("SECURITY: Checking fraud...");
+
+        // Call the REAL object
+        realService.processPayment(amount);
+
+        // AFTER — added by proxy
+        System.out.println("LOG: Payment completed");
+        System.out.println("AUDIT: Transaction recorded");
+    }
+}
+// PaymentService has NO idea it's being proxied ✅
+// PaymentService stays clean ✅
+🌱 Spring Boot — AOP IS Proxy Pattern!
+Spring uses Proxy automatically for @Transactional, @Cacheable, @Async!
+@Service
+public class PaymentService {
+
+    @Transactional  // ← Spring creates a PROXY around this method
+    public void processPayment(String userId, double amount) {
+        // Your pure business logic — no transaction code here
+        paymentRepository.save(userId, amount);
+        loyaltyRepository.addPoints(userId, amount);
+        // If anything fails → Spring PROXY auto-rolls back ✅
+    }
+
+    @Cacheable(value = "paymentCache", key = "#userId")  // ← Proxy adds caching
+    public Payment getLastPayment(String userId) {
+        // Spring PROXY checks cache first
+        // If found → returns from cache, never calls this method
+        // If not found → calls this, stores result in cache ✅
+        return paymentRepository.findLatestByUserId(userId);
+    }
+}
+What Spring Actually Does Behind the Scenes
+You call: paymentService.processPayment("user123", 500)
+
+What actually runs:
+┌─────────────────────────────────────────────────────┐
+│           Spring's Proxy (auto-generated)           │
+│  1. BEGIN TRANSACTION                               │
+│  2. Call real PaymentService.processPayment()  ──┐  │
+│                                                  │  │
+│  ┌───────────────────────────────────────────────┘  │
+│  │   Real PaymentService                            │
+│  │   - save payment to DB                           │
+│  │   - add loyalty points                           │
+│  └──────────────────────────────────────────────┐   │
+│                                                  │   │
+│  3. If success → COMMIT TRANSACTION              │   │
+│  4. If error   → ROLLBACK TRANSACTION            │   │
+└─────────────────────────────────────────────────────┘
+
+Your PaymentService has ZERO transaction code ✅
+Spring Proxy handles it all ✅
+Interview Line
+"@Transactional in Spring is Proxy Pattern. Spring creates a proxy around your service — adds begin/commit/rollback automatically. Your business logic stays clean. Same with @Cacheable — proxy checks cache before hitting DB."
+
+5️⃣ Decorator Pattern
+Rule
+"Add new features to an object dynamically — without changing the original class or using inheritance."
+Simple Analogy
+A plain coffee costs ₹50. Add milk → ₹60. Add sugar → ₹65. Add caramel → ₹80. You're decorating the coffee step by step. The base coffee never changes.
+Base:  Coffee (₹50)
++Milk: MilkDecorator wraps Coffee (₹60)
++Sugar: SugarDecorator wraps MilkDecorator (₹65)
+Fintech Example — Payment Notifications
+// Base interface
+interface PaymentNotification {
+    void send(String userId, double amount);
+}
+
+// Base implementation — just SMS
+class SMSNotification implements PaymentNotification {
+    public void send(String userId, double amount) {
+        System.out.println("SMS: ₹" + amount + " paid → " + userId);
+    }
+}
+
+// Decorator base
+abstract class NotificationDecorator implements PaymentNotification {
+    protected PaymentNotification wrapped;
+    NotificationDecorator(PaymentNotification notification) {
+        this.wrapped = notification;
+    }
+}
+
+// Add Email on top of SMS
+class EmailDecorator extends NotificationDecorator {
+    EmailDecorator(PaymentNotification notification) { super(notification); }
+
+    public void send(String userId, double amount) {
+        wrapped.send(userId, amount);   // call original
+        System.out.println("EMAIL: Receipt sent to " + userId); // add email
+    }
+}
+
+// Add WhatsApp on top of Email+SMS
+class WhatsAppDecorator extends NotificationDecorator {
+    WhatsAppDecorator(PaymentNotification notification) { super(notification); }
+
+    public void send(String userId, double amount) {
+        wrapped.send(userId, amount);  // call original (which calls SMS + Email)
+        System.out.println("WHATSAPP: Payment alert sent → " + userId); // add WhatsApp
+    }
+}
+
+// Usage — compose any combination ✅
+PaymentNotification smsOnly = new SMSNotification();
+smsOnly.send("user123", 500);
+// Output: SMS: ₹500 paid → user123
+
+PaymentNotification smsAndEmail = new EmailDecorator(new SMSNotification());
+smsAndEmail.send("user123", 500);
+// Output: SMS: ₹500 paid → user123
+//         EMAIL: Receipt sent to user123
+
+PaymentNotification allChannels = new WhatsAppDecorator(
+                                      new EmailDecorator(
+                                          new SMSNotification()));
+allChannels.send("user123", 500);
+// Output: SMS + EMAIL + WHATSAPP ✅
+Proxy vs Decorator — Key Difference
+PROXY:      Controls ACCESS to the object
+            (security check, caching, logging, transactions)
+            Proxy knows what the real object is
+
+DECORATOR:  Adds NEW FEATURES to the object
+            (extra notifications, extra processing)
+            Stacks features on top of each other
+
+Real world:
+PROXY     = Bank security guard (controls who enters)
+DECORATOR = Customizing your coffee (adds features)
+Interview Line
+"Decorator adds features dynamically without changing the original class. In our notification system, SMSNotification is the base — we wrap it with EmailDecorator, then WhatsAppDecorator. Each adds its own behaviour and calls the wrapped object. No inheritance needed, fully composable."
+
+6️⃣ Adapter Pattern
+Rule
+"Make two incompatible interfaces work together. Acts as a translator."
+Simple Analogy
+Your laptop charger is Type-C but the hotel room has a 3-pin socket. You use a travel adapter. The charger and socket don't change — the adapter translates between them.
+Fintech Example — Old Bank API + New System
+// OLD bank API — you cannot change this (third party)
+public class OldBankPaymentAPI {
+    public boolean makeTransfer(String fromAcc, String toAcc, int amountInPaise) {
+        System.out.println("Old API: Transfer ₹" + (amountInPaise/100));
+        return true;
+    }
+}
+
+// YOUR system expects this interface
+public interface ModernPaymentGateway {
+    boolean processPayment(String userId, double amountInRupees);
+}
+
+// ADAPTER — translates between old API and new interface
+public class BankAPIAdapter implements ModernPaymentGateway {
+
+    private OldBankPaymentAPI oldAPI = new OldBankPaymentAPI(); // wraps old API
+
+    public boolean processPayment(String userId, double amountInRupees) {
+        // Translate: rupees → paise, userId → account number
+        String fromAccount = getAccountNumber(userId);
+        String toAccount   = "PAYTM_MERCHANT_ACC";
+        int amountInPaise  = (int)(amountInRupees * 100); // rupees to paise ✅
+
+        return oldAPI.makeTransfer(fromAccount, toAccount, amountInPaise);
+    }
+
+    private String getAccountNumber(String userId) {
+        return "ACC_" + userId; // lookup logic
+    }
+}
+
+// Your PaymentService uses ModernPaymentGateway — doesn't know about old API ✅
+public class PaymentService {
+    private ModernPaymentGateway gateway;
+
+    PaymentService(ModernPaymentGateway gateway) {
+        this.gateway = gateway;
+    }
+
+    public void pay(String userId, double amount) {
+        gateway.processPayment(userId, amount); // clean ✅
+    }
+}
+
+// Wire them together
+PaymentService service = new PaymentService(new BankAPIAdapter()); // ✅
+service.pay("user123", 500.0);
+Proxy vs Adapter vs Decorator — Quick Comparison
+PROXY:     Same interface, controls access
+           [ You ] ──► [ Proxy ] ──► [ Real Object ]
+           Same type, added behaviour
+
+ADAPTER:   Different interfaces, translates
+           [ New System ] ──► [ Adapter ] ──► [ Old System ]
+           Bridges incompatible interfaces
+
+DECORATOR: Same interface, adds features
+           [ Base ] ──► [ Decorator1 ] ──► [ Decorator2 ]
+           Stacks extra features
+Interview Line
+"Adapter Pattern when integrating with third-party or legacy systems. Our BankAPIAdapter wraps the old bank API — translates rupees to paise, userId to account number. Our PaymentService only sees ModernPaymentGateway and never knows about the old API."
+
+🔄 BEHAVIORAL PATTERNS
+How objects COMMUNICATE with each other
+
+7️⃣ Strategy Pattern
+Rule
+"Define a family of algorithms, put each in a separate class, swap them at runtime."
+Simple Analogy
+Google Maps — "Car, Bike, or Walking?" Route strategy changes. Map app stays the same.
+🌱 Spring Boot
+interface PaymentStrategy { void pay(double amount, String userId); }
+
+@Component("upi")
+class UPIPaymentStrategy implements PaymentStrategy {
+    public void pay(double amount, String userId) {
+        System.out.println("UPI: ₹" + amount);
+    }
+}
+
+@Component("card")
+class CardPaymentStrategy implements PaymentStrategy {
+    public void pay(double amount, String userId) {
+        System.out.println("Card: ₹" + amount);
+    }
+}
+
+@Service
+public class PaymentService {
+    private final Map<String, PaymentStrategy> strategies;
+
+    @Autowired
+    public PaymentService(Map<String, PaymentStrategy> strategies) {
+        // Spring auto-builds: {"upi" → UPI bean, "card" → Card bean}
+        this.strategies = strategies;
+    }
+
+    public void pay(String type, double amount, String userId) {
+        strategies.get(type).pay(amount, userId); // ✅
+    }
+}
+// Add BNPL = just new @Component("bnpl") — NOTHING else changes ✅
+Interview Line
+"Strategy Pattern via Spring's Map injection. Each strategy is a @Component. Spring auto-injects all implementations. Adding new payment type = new class only."
+
+8️⃣ Observer Pattern
+Rule
+"When one object changes state, all dependents are notified automatically."
+Simple Analogy
+After Paytm payment succeeds → SMS fires, Email fires, Loyalty points fire — all automatically. Payment doesn't call each one manually.
+🌱 Spring Boot — ApplicationEvent
+// Event
+public class PaymentSuccessEvent extends ApplicationEvent {
+    private final Payment payment;
+    public PaymentSuccessEvent(Object source, Payment payment) {
+        super(source);
+        this.payment = payment;
+    }
+    public Payment getPayment() { return payment; }
+}
+
+// Publisher — fires event, doesn't care who listens
+@Service
+public class PaymentService {
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
+
+    public void processPayment(Payment payment) {
+        // process...
+        eventPublisher.publishEvent(
+            new PaymentSuccessEvent(this, payment)
+        ); // fire and forget ✅
+    }
+}
+
+// Listeners react automatically
+@Component
+public class SMSListener {
+    @EventListener
+    public void onPayment(PaymentSuccessEvent e) {
+        System.out.println("SMS sent to " + e.getPayment().getUserId());
+    }
+}
+
+@Component
+public class LoyaltyListener {
+    @EventListener
+    @Async // runs in separate thread ✅
+    public void onPayment(PaymentSuccessEvent e) {
+        System.out.println("Loyalty points added!");
+    }
+}
+// Add WhatsApp = new @Component. PaymentService untouched ✅
+Interview Line
+"After payment, PaymentService fires PaymentSuccessEvent via ApplicationEventPublisher. Each listener — SMS, Loyalty, Email — reacts independently with @EventListener. OCP in action."
+
+9️⃣ Template Method Pattern
+Rule
+"Define the fixed skeleton of an algorithm in base class. Let subclasses fill in the variable steps."
+Simple Analogy
+Every loan follows the same flow: KYC → Credit Score → Interest Rate → EMI → Approval. Only the interest rate differs per loan type.
+// Base class — fixed skeleton
+public abstract class LoanProcessor {
+
+    public final void processLoan(String userId, double amount) { // FIXED
+        verifyKYC(userId);                      // fixed
+        checkCreditScore(userId);               // fixed
+        double rate = getInterestRate();        // ← subclass fills this
+        calculateEMI(amount, rate);             // fixed
+        approveLoan(userId);                    // fixed
+    }
+
+    private void verifyKYC(String u) { System.out.println("KYC done"); }
+    private void checkCreditScore(String u) { System.out.println("Score checked"); }
+    private void calculateEMI(double a, double r) { System.out.println("EMI = ₹" + a*r/12); }
+    private void approveLoan(String u) { System.out.println("Approved!"); }
+
+    protected abstract double getInterestRate(); // subclass decides
+}
+
+@Component
+class HomeLoanProcessor extends LoanProcessor {
+    protected double getInterestRate() { return 0.085; } // 8.5%
+}
+
+@Component
+class PersonalLoanProcessor extends LoanProcessor {
+    protected double getInterestRate() { return 0.14; }  // 14%
+}
+🌱 Spring Boot — JdbcTemplate IS Template Method!
+@Repository
+public class PaymentRepository {
+    @Autowired
+    private JdbcTemplate jdbcTemplate; // Template Method in action!
+
+    public void save(Payment p) {
+        // You only write SQL ← your variable step
+        // JdbcTemplate handles: open connection, create statement,
+        //                       handle exceptions, close connection ← fixed steps
+        jdbcTemplate.update(
+            "INSERT INTO payments(id, user_id, amount) VALUES(?,?,?)",
+            p.getId(), p.getUserId(), p.getAmount()
+        );
+    }
+}
+// RestTemplate, KafkaTemplate, RedisTemplate — ALL Template Method Pattern!
+Interview Line
+"Template Method defines fixed algorithm with variable steps. Spring's JdbcTemplate is the perfect example — it handles connection management, you just provide the SQL query."
+
+🔟 Chain of Responsibility Pattern
+Rule
+"Pass a request through a chain of handlers. Each handler decides to process it or pass it on."
+Simple Analogy
+A loan application goes through multiple desks: Clerk → Manager → Senior Manager → Director. Each person either approves or passes it to the next level.
+// Handler interface
+abstract class LoanApprovalHandler {
+    protected LoanApprovalHandler next;
+
+    public LoanApprovalHandler setNext(LoanApprovalHandler next) {
+        this.next = next;
+        return next;
+    }
+
+    public abstract void approve(double loanAmount);
+}
+
+// Each handler handles its own range
+class ClerkHandler extends LoanApprovalHandler {
+    public void approve(double amount) {
+        if (amount <= 50000) {
+            System.out.println("Clerk approved ₹" + amount); // handles it
+        } else if (next != null) {
+            next.approve(amount); // passes to next
+        }
+    }
+}
+
+class ManagerHandler extends LoanApprovalHandler {
+    public void approve(double amount) {
+        if (amount <= 500000) {
+            System.out.println("Manager approved ₹" + amount);
+        } else if (next != null) {
+            next.approve(amount);
+        }
+    }
+}
+
+class DirectorHandler extends LoanApprovalHandler {
+    public void approve(double amount) {
+        if (amount <= 5000000) {
+            System.out.println("Director approved ₹" + amount);
+        } else {
+            System.out.println("Amount too large — rejected ₹" + amount);
+        }
+    }
+}
+
+// Build the chain
+LoanApprovalHandler clerk = new ClerkHandler();
+LoanApprovalHandler manager = new ManagerHandler();
+LoanApprovalHandler director = new DirectorHandler();
+
+clerk.setNext(manager).setNext(director); // chain built ✅
+
+// Test
+clerk.approve(30000);    // "Clerk approved ₹30000"
+clerk.approve(200000);   // "Manager approved ₹200000"
+clerk.approve(2000000);  // "Director approved ₹2000000"
+clerk.approve(9999999);  // "Amount too large — rejected"
+🌱 Spring Boot — Security Filter Chain IS Chain of Responsibility!
+// Spring Security internally uses Chain of Responsibility!
+// Every HTTP request passes through a chain of filters:
+
+UsernamePasswordAuthenticationFilter  // checks username/password
+    ↓ (if passes)
+BasicAuthenticationFilter             // checks Basic auth header
+    ↓ (if passes)
+JwtAuthenticationFilter               // checks JWT token
+    ↓ (if passes)
+AuthorizationFilter                   // checks permissions
+    ↓ (if passes)
+Your Controller                       // finally reaches your code ✅
+
+// If ANY filter rejects → request stopped, 401/403 returned
+// Your controller never even knows about failed requests ✅
+Interview Line
+"Spring Security's filter chain is Chain of Responsibility. Each filter either processes the request or passes it on. JWT filter validates token — if valid, passes to authorization filter — if authorized, reaches controller. If any filter rejects — chain stops, user gets 401."
+
+🗺️ Complete Cheat Sheet
+When to Use What
+Creating objects?
+├── Need ONE instance?              → Singleton
+├── Centralise creation logic?      → Factory
+└── Complex object, many fields?    → Builder
+
+Connecting objects?
+├── Add logging/security/caching?   → Proxy
+├── Old API + New system?           → Adapter
+└── Stack extra features on top?    → Decorator
+
+Object communication?
+├── Swap algorithms at runtime?     → Strategy
+├── Notify multiple objects?        → Observer
+├── Fixed steps, variable parts?    → Template Method
+└── Pass through approval chain?    → Chain of Responsibility
+
+Master Summary Table
+#	Pattern	Category	One-Line	Spring Example
+1	Singleton	Creational	One shared instance	Every @Service
+2	Factory	Creational	Centralise creation	@Configuration @Bean
+3	Builder	Creational	Step-by-step creation	@Builder, ResponseEntity
+4	Proxy	Structural	Control access	@Transactional, @Cacheable
+5	Adapter	Structural	Bridge incompatible interfaces	Legacy API wrappers
+6	Decorator	Structural	Stack extra features	Notification wrappers
+7	Strategy	Behavioral	Swap algorithms	Map<String, Strategy>
+8	Observer	Behavioral	Auto-notify on events	@EventListener
+9	Template Method	Behavioral	Fixed skeleton, variable steps	JdbcTemplate
+10	Chain of Resp.	Behavioral	Pass through approval chain	Spring Security Filters
+Structural Pattern Differences (Most Asked!)
+PROXY     → Same interface, CONTROLS ACCESS
+            Use: Logging, Security, Caching, Transactions
+            Spring: @Transactional, @Cacheable
+
+ADAPTER   → Different interfaces, TRANSLATES
+            Use: Legacy system integration, Third-party APIs
+            Spring: Wrapping old bank APIs
+
+DECORATOR → Same interface, ADDS FEATURES
+            Use: Stacking behaviours dynamically
+            Spring: Notification channels (SMS + Email + WhatsApp)
+
