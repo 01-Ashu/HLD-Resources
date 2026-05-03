@@ -10,3 +10,4 @@ for read we will have seperate database and for write we will have seperate data
 which is now added so it will show to the user after some millisecond no issue will be there .
 we can also send or update values using procedure (sql)
 
+consistent hashing:https://www.youtube.com/watch?v=IC5Y1EE-aj4&t=272s
