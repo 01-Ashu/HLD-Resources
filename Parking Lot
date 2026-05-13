@@ -1,0 +1,668 @@
+Parking Lot :-
+
+Functional:
+
+Vehicles: Bike, Car, Truck
+Spot types: Small, Medium, Large
+Bike → Small spot, Car → Medium, Truck → Large
+Entry gate generates a ticket with timestamp + spot
+Exit gate calculates bill (hourly × vehicle type rate)
+Multiple floors, multiple spots per floor
+Multiple entry + exit gates
+
+Non-Functional (always mention these — shows maturity):
+
+System should be extensible — easy to add new vehicle types
+Concurrent entries should be handled (thread safety on spot assignment)
+
+
+ENTITY              WHY IT EXISTS
+─────────────────────────────────────────────
+Vehicle             Abstract — base for all vehicles
+  └─ Bike           VehicleType = SMALL
+  └─ Car            VehicleType = MEDIUM  
+  └─ Truck          VehicleType = LARGE
+
+ParkingSpot         A single spot on a floor
+  └─ SmallSpot      fits Bike
+  └─ MediumSpot     fits Car
+  └─ LargeSpot      fits Truck
+
+ParkingFloor        Has list of ParkingSpots
+
+ParkingLot          Has list of ParkingFloors
+                    Singleton — only ONE exists
+
+Gate (abstract)     Common gate behavior
+  └─ EntryGate      assigns spot, generates ticket
+  └─ ExitGate       calculates bill, frees spot
+
+Ticket              Created at entry
+                    has: ticketId, vehicle,
+                    spot, entryTime
+
+Payment             Created at exit
+                    has: ticket, amount, mode
+
+PricingStrategy     Interface — calculates fare
+  └─ HourlyPricing
+  └─ FlatPricing
+
+
+
+
+Singleton    → ParkingLot (only one exists)
+Strategy     → PricingStrategy (Hourly / Flat / VehicleTypeBased),Payment Strategy ->upi,card,
+Factory      → SpotFactory (gives right spot for vehicle type)
+Observer     → Spot status change → DisplayBoard updates
+
+
+
+
+What you CANNOT do in interface
+interface Vehicle {
+
+    String licensePlate; // ❌ ERROR
+
+}
+
+Why?
+
+Because interfaces are not meant to store per-object data.
+
+Why interface avoids state
+
+Because interface is mainly for:
+
+behavior contract
+
+Example:
+
+interface Payable {
+    void pay();
+}
+
+
+
+
+🎙️ Interviewer Response
+
+"Excellent observation! You're absolutely right. Since this is a single server application, synchronized is perfectly fine. Using distributed locks here would be over-engineering. Good thinking — shows you know when NOT to over-engineer."
+
+
+💡 How to Say This in Interview
+
+"Since this is a single JVM application, I'll use synchronized for thread safety on spot assignment. Distributed locks like Redis Redisson would only be needed if we had multiple servers — which is an HLD concern, not LLD."
+
+That answer = senior level thinking. Interviewers love it.
+
+
+
+## 🎙️ Interviewer Response
+
+> *"Excellent observation! You're absolutely right. Since this is a single server application, `synchronized` is perfectly fine. Using distributed locks here would be over-engineering. Good thinking — shows you know when NOT to over-engineer."*
+
+---
+
+## 💡 How to Say This in Interview
+
+> *"Since this is a single JVM application, I'll use `synchronized` for thread safety on spot assignment. Distributed locks like Redis Redisson would only be needed if we had multiple servers — which is an HLD concern, not LLD."*
+
+**That answer = senior level thinking. Interviewers love it.**
+
+---
+
+
+## ✅ Complete Code — Step 1 to End
+
+---
+
+### STEP 1 — Enums
+
+```java
+public enum VehicleType {
+    BIKE, CAR, TRUCK
+}
+
+public enum SpotType {
+    SMALL, MEDIUM, LARGE
+}
+
+public enum PaymentMode {
+    CASH, CARD, UPI
+}
+
+public enum SpotStatus {
+    AVAILABLE, OCCUPIED
+}
+```
+
+---
+
+### STEP 2 — Vehicle Hierarchy
+
+```java
+// Abstract parent
+public abstract class Vehicle {
+    private String      licensePlate;
+    private VehicleType vehicleType;
+
+    public Vehicle(String licensePlate, VehicleType type) {
+        this.licensePlate = licensePlate;
+        this.vehicleType  = type;
+    }
+
+    public VehicleType getVehicleType() { return vehicleType;   }
+    public String getLicensePlate()     { return licensePlate;  }
+}
+
+// Subtypes
+public class Bike extends Vehicle {
+    public Bike(String lp) { super(lp, VehicleType.BIKE); }
+}
+
+public class Car extends Vehicle {
+    public Car(String lp) { super(lp, VehicleType.CAR); }
+}
+
+public class Truck extends Vehicle {
+    public Truck(String lp) { super(lp, VehicleType.TRUCK); }
+}
+```
+
+---
+
+### STEP 3 — ParkingSpot Hierarchy
+
+```java
+public abstract class ParkingSpot {
+    private String      spotId;
+    private SpotType    spotType;
+    private SpotStatus  status;
+    private Vehicle     currentVehicle;
+
+    public ParkingSpot(String spotId, SpotType spotType) {
+        this.spotId   = spotId;
+        this.spotType = spotType;
+        this.status   = SpotStatus.AVAILABLE;
+    }
+
+    public boolean isAvailable() {
+        return status == SpotStatus.AVAILABLE;
+    }
+
+    // synchronized — two vehicles can't grab same spot
+    public synchronized void assignVehicle(Vehicle vehicle) {
+        if (!isAvailable()) {
+            throw new RuntimeException("Spot already occupied!");
+        }
+        this.currentVehicle = vehicle;
+        this.status         = SpotStatus.OCCUPIED;
+    }
+
+    public synchronized void removeVehicle() {
+        this.currentVehicle = null;
+        this.status         = SpotStatus.AVAILABLE;
+    }
+
+    public abstract boolean canFitVehicle(Vehicle vehicle);
+
+    public String   getSpotId()   { return spotId;   }
+    public SpotType getSpotType() { return spotType;  }
+}
+
+// Small — fits Bike only
+public class SmallSpot extends ParkingSpot {
+    public SmallSpot(String spotId) {
+        super(spotId, SpotType.SMALL);
+    }
+    @Override
+    public boolean canFitVehicle(Vehicle v) {
+        return v.getVehicleType() == VehicleType.BIKE;
+    }
+}
+
+// Medium — fits Car only
+public class MediumSpot extends ParkingSpot {
+    public MediumSpot(String spotId) {
+        super(spotId, SpotType.MEDIUM);
+    }
+    @Override
+    public boolean canFitVehicle(Vehicle v) {
+        return v.getVehicleType() == VehicleType.CAR;
+    }
+}
+
+// Large — fits Truck only
+public class LargeSpot extends ParkingSpot {
+    public LargeSpot(String spotId) {
+        super(spotId, SpotType.LARGE);
+    }
+    @Override
+    public boolean canFitVehicle(Vehicle v) {
+        return v.getVehicleType() == VehicleType.TRUCK;
+    }
+}
+```
+
+---
+
+### STEP 4 — ParkingFloor
+
+```java
+public class ParkingFloor {
+    private String            floorId;
+    private List<ParkingSpot> spots;
+
+    public ParkingFloor(String floorId) {
+        this.floorId = floorId;
+        this.spots   = new ArrayList<>();
+    }
+
+    public void addSpot(ParkingSpot spot) {
+        spots.add(spot);
+    }
+
+    // synchronized — two threads can't scan
+    // same floor simultaneously
+    public synchronized ParkingSpot findAvailableSpot(Vehicle v) {
+        for (ParkingSpot spot : spots) {
+            if (spot.isAvailable() && spot.canFitVehicle(v)) {
+                return spot;
+            }
+        }
+        return null;
+    }
+
+    public int getAvailableCount(VehicleType type) {
+        int count = 0;
+        for (ParkingSpot spot : spots) {
+            if (spot.isAvailable()) {
+                // create dummy vehicle to check fit
+                Vehicle dummy = createDummy(type);
+                if (spot.canFitVehicle(dummy)) count++;
+            }
+        }
+        return count;
+    }
+
+    private Vehicle createDummy(VehicleType type) {
+        switch (type) {
+            case BIKE:  return new Bike("DUMMY");
+            case CAR:   return new Car("DUMMY");
+            case TRUCK: return new Truck("DUMMY");
+            default: throw new IllegalArgumentException();
+        }
+    }
+
+    public String            getFloorId() { return floorId; }
+    public List<ParkingSpot> getSpots()   { return spots;   }
+}
+```
+
+---
+
+### STEP 5 — ParkingLot (Singleton)
+
+```java
+public class ParkingLot {
+
+    // volatile — ensures visibility across threads
+    private static volatile ParkingLot instance;
+
+    private String             name;
+    private List<ParkingFloor> floors;
+    private List<EntryGate>    entryGates;
+    private List<ExitGate>     exitGates;
+    private DisplayBoard       displayBoard;
+
+    // Private — no one can call new ParkingLot()
+    private ParkingLot(String name) {
+        this.name        = name;
+        this.floors      = new ArrayList<>();
+        this.entryGates  = new ArrayList<>();
+        this.exitGates   = new ArrayList<>();
+        this.displayBoard = new DisplayBoard();
+    }
+
+    // Double checked locking
+    public static ParkingLot getInstance(String name) {
+        if (instance == null) {
+            synchronized (ParkingLot.class) {
+                if (instance == null) {
+                    instance = new ParkingLot(name);
+                }
+            }
+        }
+        return instance;
+    }
+
+    public void addFloor(ParkingFloor floor) {
+        floors.add(floor);
+        // notify display board — Observer pattern
+        displayBoard.update(floors);
+    }
+
+    // Search all floors — first available spot wins
+    public ParkingSpot findAvailableSpot(Vehicle vehicle) {
+        for (ParkingFloor floor : floors) {
+            ParkingSpot spot = floor.findAvailableSpot(vehicle);
+            if (spot != null) return spot;
+        }
+        return null; // parking full
+    }
+
+    public List<ParkingFloor> getFloors()      { return floors;      }
+    public DisplayBoard       getDisplayBoard() { return displayBoard; }
+}
+```
+
+---
+
+### STEP 6 — Ticket
+
+```java
+public class Ticket {
+    private String        ticketId;
+    private Vehicle       vehicle;
+    private ParkingSpot   spot;
+    private LocalDateTime entryTime;
+
+    public Ticket(Vehicle vehicle, ParkingSpot spot) {
+        this.ticketId  = UUID.randomUUID().toString();
+        this.vehicle   = vehicle;
+        this.spot      = spot;
+        this.entryTime = LocalDateTime.now();
+    }
+
+    public String        getTicketId()  { return ticketId;  }
+    public Vehicle       getVehicle()   { return vehicle;   }
+    public ParkingSpot   getSpot()      { return spot;      }
+    public LocalDateTime getEntryTime() { return entryTime; }
+}
+```
+
+---
+
+### STEP 7 — PricingStrategy
+
+```java
+public interface PricingStrategy {
+    double calculateFare(long hours, VehicleType type);
+}
+
+public class HourlyPricing implements PricingStrategy {
+    @Override
+    public double calculateFare(long hours, VehicleType type) {
+        switch (type) {
+            case BIKE:  return hours * 20;
+            case CAR:   return hours * 40;
+            case TRUCK: return hours * 80;
+            default: throw new IllegalArgumentException();
+        }
+    }
+}
+
+public class FlatPricing implements PricingStrategy {
+    @Override
+    public double calculateFare(long hours, VehicleType type) {
+        switch (type) {
+            case BIKE:  return 50;
+            case CAR:   return 100;
+            case TRUCK: return 200;
+            default: throw new IllegalArgumentException();
+        }
+    }
+}
+```
+
+---
+
+### STEP 8 — PaymentStrategy
+
+```java
+public interface PaymentStrategy {
+    void processPayment(double amount);
+}
+
+public class CashPayment implements PaymentStrategy {
+    public void processPayment(double amount) {
+        System.out.println("Cash collected: ₹" + amount);
+    }
+}
+
+public class UPIPayment implements PaymentStrategy {
+    public void processPayment(double amount) {
+        System.out.println("UPI payment done: ₹" + amount);
+    }
+}
+
+public class CardPayment implements PaymentStrategy {
+    public void processPayment(double amount) {
+        System.out.println("Card payment done: ₹" + amount);
+    }
+}
+```
+
+---
+
+### STEP 9 — SpotFactory
+
+```java
+public class SpotFactory {
+    public static ParkingSpot createSpot(
+            VehicleType type, String spotId) {
+        switch (type) {
+            case BIKE:  return new SmallSpot(spotId);
+            case CAR:   return new MediumSpot(spotId);
+            case TRUCK: return new LargeSpot(spotId);
+            default: throw new IllegalArgumentException();
+        }
+    }
+}
+```
+
+---
+
+### STEP 10 — DisplayBoard (Observer)
+
+```java
+// Observer interface
+public interface Observer {
+    void update(List<ParkingFloor> floors);
+}
+
+// Concrete observer
+public class DisplayBoard implements Observer {
+
+    @Override
+    public void update(List<ParkingFloor> floors) {
+        System.out.println("===== DISPLAY BOARD =====");
+        for (ParkingFloor floor : floors) {
+            long available = floor.getSpots()
+                .stream()
+                .filter(ParkingSpot::isAvailable)
+                .count();
+            System.out.println("Floor " + floor.getFloorId()
+                + " → Available: " + available);
+        }
+        System.out.println("=========================");
+    }
+}
+```
+
+---
+
+### STEP 11 — EntryGate
+
+```java
+public class EntryGate {
+    private String     gateId;
+    private ParkingLot parkingLot;
+
+    public EntryGate(String gateId, ParkingLot lot) {
+        this.gateId     = gateId;
+        this.parkingLot = lot;
+    }
+
+    public Ticket entry(Vehicle vehicle) {
+
+        // 1. Find available spot across all floors
+        ParkingSpot spot =
+            parkingLot.findAvailableSpot(vehicle);
+
+        // 2. No spot found → parking full
+        if (spot == null) {
+            throw new RuntimeException(
+                "Parking Full! No spot for "
+                + vehicle.getVehicleType());
+        }
+
+        // 3. Assign vehicle to spot
+        spot.assignVehicle(vehicle);
+
+        // 4. Update display board
+        parkingLot.getDisplayBoard()
+                  .update(parkingLot.getFloors());
+
+        // 5. Generate ticket
+        Ticket ticket = new Ticket(vehicle, spot);
+        System.out.println("Entry done. Ticket: "
+            + ticket.getTicketId()
+            + " | Spot: " + spot.getSpotId());
+
+        return ticket;
+    }
+}
+```
+
+---
+
+### STEP 12 — ExitGate
+
+```java
+public class ExitGate {
+    private String          gateId;
+    private PricingStrategy pricingStrategy;
+    private PaymentStrategy paymentStrategy;
+
+    public ExitGate(String gateId,
+                    PricingStrategy pricing,
+                    PaymentStrategy payment) {
+        this.gateId          = gateId;
+        this.pricingStrategy = pricing;
+        this.paymentStrategy = payment;
+    }
+
+    public void exit(Ticket ticket) {
+
+        // 1. Calculate hours parked
+        LocalDateTime exitTime = LocalDateTime.now();
+        long hours = ChronoUnit.HOURS.between(
+            ticket.getEntryTime(), exitTime);
+
+        // Minimum 1 hour billing
+        hours = Math.max(hours, 1);
+
+        // 2. Calculate fare — Strategy pattern
+        double fare = pricingStrategy.calculateFare(
+            hours,
+            ticket.getVehicle().getVehicleType());
+
+        // 3. Process payment — Strategy pattern
+        paymentStrategy.processPayment(fare);
+
+        // 4. Free the spot
+        ticket.getSpot().removeVehicle();
+
+        // 5. Update display board
+        System.out.println("Exit done. Spot freed: "
+            + ticket.getSpot().getSpotId()
+            + " | Fare: ₹" + fare);
+    }
+
+    // Switch payment at runtime — Strategy!
+    public void setPaymentStrategy(PaymentStrategy p) {
+        this.paymentStrategy = p;
+    }
+
+    // Switch pricing at runtime — Strategy!
+    public void setPricingStrategy(PricingStrategy p) {
+        this.pricingStrategy = p;
+    }
+}
+```
+
+---
+
+### STEP 13 — Main (How it all connects)
+
+```java
+public class Main {
+    public static void main(String[] args) {
+
+        // 1. Setup parking lot (Singleton)
+        ParkingLot lot = ParkingLot.getInstance("Phoenix Mall");
+
+        // 2. Create floors
+        ParkingFloor floor1 = new ParkingFloor("F1");
+        ParkingFloor floor2 = new ParkingFloor("F2");
+
+        // 3. Add spots using SpotFactory
+        floor1.addSpot(SpotFactory.createSpot(VehicleType.BIKE,  "F1-S1"));
+        floor1.addSpot(SpotFactory.createSpot(VehicleType.CAR,   "F1-S2"));
+        floor1.addSpot(SpotFactory.createSpot(VehicleType.CAR,   "F1-S3"));
+        floor2.addSpot(SpotFactory.createSpot(VehicleType.TRUCK, "F2-S1"));
+
+        lot.addFloor(floor1);
+        lot.addFloor(floor2);
+
+        // 4. Setup gates
+        EntryGate entry = new EntryGate("GATE-1", lot);
+        ExitGate  exit  = new ExitGate(
+            "GATE-2",
+            new HourlyPricing(),  // pricing strategy
+            new UPIPayment()      // payment strategy
+        );
+
+        // 5. Vehicle enters
+        Vehicle car = new Car("MH-01-AB-1234");
+        Ticket ticket = entry.entry(car);
+
+        // 6. Switch payment to cash at runtime
+        exit.setPaymentStrategy(new CashPayment());
+
+        // 7. Vehicle exits
+        exit.exit(ticket);
+    }
+}
+```
+
+---
+
+
+
+
+Vehicle arrives at EntryGate
+         ↓
+EntryGate finds spot
+         ↓
+EntryGate calls → new Ticket(vehicle, spot)
+         ↓
+Inside Ticket constructor:
+    entryTime = LocalDateTime.now()  ← CAPTURED HERE
+         ↓
+Ticket returned to EntryGate
+         ↓
+EntryGate returns Ticket to caller
+         ↓
+Ticket travels with vehicle
+(like a physical parking ticket in real life)
+         ↓
+At ExitGate → ticket.getEntryTime() is used
+to calculate hours parked
+
+
+
+
+
