@@ -1,0 +1,688 @@
+Functional Requirements
+
+"Let me state the functional requirements so we're aligned."
+
+FR-1  The board is 3×3 with 9 cells
+FR-2  There are exactly 2 players
+FR-3  Each player is assigned a symbol — X or O
+FR-4  Players take turns placing their symbol on an empty cell
+FR-5  A player wins by filling an entire row
+FR-6  A player wins by filling an entire column
+FR-7  A player wins by filling a diagonal (main or anti)
+FR-8  If all 9 cells are filled and no one won → it is a draw
+FR-9  A player cannot place on an already-filled cell
+FR-10 The game ends immediately on a win or draw
+
+
+
+Non-Functional Requirements
+
+"Now the non-functional requirements — these show maturity."
+
+NFR-1  Extensible board size  — 3×3 today, N×N tomorrow
+NFR-2  Extensible players     — 2 players today, 3+ tomorrow
+NFR-3  Extensible win logic   — add new win conditions without
+                                changing Game class
+NFR-4  Extensible player type — Human today, Bot/AI tomorrow
+NFR-5  Extensible output      — console today, UI/DB tomorrow
+NFR-6  Single JVM app         — no distributed locks needed
+
+
+
+
+Identify the Entities
+
+"Based on requirements, let me identify the core entities."
+
+ENTITY              WHY IT EXISTS
+──────────────────────────────────────────────────────
+Symbol (enum)       X or O — what a player places
+CellStatus (enum)   EMPTY or FILLED — state of a cell
+GameStatus (enum)   IN_PROGRESS, WIN, DRAW — state of game
+PlayerType (enum)   HUMAN or BOT — for Factory
+
+Cell                One square on the board
+                    Knows its position + status + symbol
+
+Board               Holds the N×N grid of Cells
+                    Validates and records moves
+                    Does NOT decide win — SRP
+
+Player (abstract)   Base for all player types
+                    Has shared state: name, symbol
+                    Cannot instantiate → enforces contract
+  └─ HumanPlayer    Reads move from console input
+  └─ BotPlayer      Computes move automatically
+
+WinningStrategy     Interface — checks if a move won
+  └─ RowWinning     Checks entire row of last move
+  └─ ColWinning     Checks entire column of last move
+  └─ DiagonalWinning Checks both diagonals
+
+GameObserver        Interface — reacts to game events
+  └─ DisplayBoard   Prints board + result to console
+  └─ Leaderboard    Awards points on win
+  └─ Notification   Sends alerts on game over
+
+GameEvent           Data passed to every observer
+                    Has: message, status, winner
+
+PlayerFactory       Creates HumanPlayer or BotPlayer
+                    Caller never uses new directly
+
+Game                Orchestrates the game loop
+                    Subject in Observer pattern
+                    Delegates win-check to strategies
+
+GameController      Entry point — wires everything
+
+5. Design Patterns — say WHY not just WHAT
+
+"Let me walk through the design patterns I'll use and why."
+
+PATTERN         WHERE                   WHY
+──────────────────────────────────────────────────────────────
+Abstract Class  Player                  Has shared STATE
+                                        (name, symbol)
+                                        Interface can't hold
+                                        per-object data
+
+Strategy        WinningStrategy         Win conditions are
+                                        pluggable — add new
+                                        rule = new class only
+                                        Game never changes
+
+Observer        Game → observers        Game should not know
+                                        HOW results are shown
+                                        DisplayBoard, Leaderboard
+                                        listen independently
+
+Factory         PlayerFactory           Centralizes creation
+                                        Swap Human→Bot in
+                                        one place only
+
+
+// ============================================================
+//  TIC-TAC-TOE — COMPLETE LLD
+//  Patterns: Abstract Class, Strategy, Observer, Factory
+//  JPA:      JOINED inheritance strategy
+// ============================================================
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 1 — ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum Symbol {
+    X, O
+}
+
+enum CellStatus {
+    EMPTY, FILLED
+}
+
+enum GameStatus {
+    IN_PROGRESS, WIN, DRAW
+}
+
+enum PlayerType {
+    HUMAN, BOT
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 2 — CELL
+//  Just a data container. No game logic here.
+//  Single Responsibility: only knows its own position + status.
+// ─────────────────────────────────────────────────────────────
+
+class Cell {
+    private int        row;
+    private int        col;
+    private CellStatus status;
+    private Symbol     symbol;
+
+    public Cell(int row, int col) {
+        this.row    = row;
+        this.col    = col;
+        this.status = CellStatus.EMPTY;
+        this.symbol = null;
+    }
+
+    public boolean isEmpty() {
+        return status == CellStatus.EMPTY;
+    }
+
+    public void fill(Symbol symbol) {
+        this.symbol = symbol;
+        this.status = CellStatus.FILLED;
+    }
+
+    public int        getRow()    { return row;    }
+    public int        getCol()    { return col;    }
+    public CellStatus getStatus() { return status; }
+    public Symbol     getSymbol() { return symbol; }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 3 — BOARD
+//  Stores the grid. Makes moves. Knows if it's full.
+//  Does NOT decide who wins — that's WinningStrategy's job.
+// ─────────────────────────────────────────────────────────────
+
+class Board {
+    private int      size;
+    private Cell[][] cells;
+    private int      freeCells;
+
+    public Board(int size) {
+        this.size      = size;
+        this.freeCells = size * size;
+        this.cells     = new Cell[size][size];
+
+        for (int i = 0; i < size; i++)
+            for (int j = 0; j < size; j++)
+                cells[i][j] = new Cell(i, j);
+    }
+
+    // Returns true if move accepted, false if cell already taken
+    public boolean makeMove(int row, int col, Symbol symbol) {
+        if (row < 0 || row >= size || col < 0 || col >= size) {
+            System.out.println("  ✘  Position out of bounds!");
+            return false;
+        }
+        if (!cells[row][col].isEmpty()) {
+            System.out.println("  ✘  Cell already taken! Try again.");
+            return false;
+        }
+        cells[row][col].fill(symbol);
+        freeCells--;
+        return true;
+    }
+
+    public boolean isFull()        { return freeCells == 0; }
+    public Cell[][] getCells()     { return cells;          }
+    public int      getSize()      { return size;           }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 4 — WINNING STRATEGY  (Strategy Pattern)
+//  Interface: contract for all win-check implementations.
+//  Game asks each strategy after every move.
+//  Adding a new win condition = new class, zero changes to Game.
+// ─────────────────────────────────────────────────────────────
+
+interface WinningStrategy {
+    boolean checkWin(Board board, int row, int col);
+}
+
+// ── Row check ────────────────────────────────────────────────
+class RowWinningStrategy implements WinningStrategy {
+    @Override
+    public boolean checkWin(Board board, int row, int col) {
+        Cell[][] cells  = board.getCells();
+        Symbol   symbol = cells[row][col].getSymbol();
+
+        for (int j = 0; j < board.getSize(); j++) {
+            if (cells[row][j].isEmpty()
+                    || cells[row][j].getSymbol() != symbol)
+                return false;
+        }
+        return true;
+    }
+}
+
+// ── Column check ─────────────────────────────────────────────
+class ColWinningStrategy implements WinningStrategy {
+    @Override
+    public boolean checkWin(Board board, int row, int col) {
+        Cell[][] cells  = board.getCells();
+        Symbol   symbol = cells[row][col].getSymbol();
+
+        for (int i = 0; i < board.getSize(); i++) {
+            if (cells[i][col].isEmpty()
+                    || cells[i][col].getSymbol() != symbol)
+                return false;
+        }
+        return true;
+    }
+}
+
+// ── Diagonal check ───────────────────────────────────────────
+//    Checks BOTH main diagonal (↘) and anti diagonal (↙)
+class DiagonalWinningStrategy implements WinningStrategy {
+    @Override
+    public boolean checkWin(Board board, int row, int col) {
+        Cell[][] cells  = board.getCells();
+        Symbol   symbol = cells[row][col].getSymbol();
+        int      n      = board.getSize();
+
+        boolean mainDiag = true;
+        boolean antiDiag = true;
+
+        for (int i = 0; i < n; i++) {
+            // Main diagonal: (0,0) → (1,1) → (2,2)
+            if (cells[i][i].isEmpty()
+                    || cells[i][i].getSymbol() != symbol)
+                mainDiag = false;
+
+            // Anti diagonal: (0,2) → (1,1) → (2,0)
+            if (cells[i][n - 1 - i].isEmpty()
+                    || cells[i][n - 1 - i].getSymbol() != symbol)
+                antiDiag = false;
+        }
+        return mainDiag || antiDiag;
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 5 — OBSERVER PATTERN
+//  GameObserver: anyone who wants to react to game events.
+//  GameEvent:    the data passed to every observer.
+//  Game is the Subject — it holds observers + notifies them.
+//
+//  Adding a new observer (UI, Leaderboard, Notification)
+//  = new class implementing GameObserver. Game never changes.
+// ─────────────────────────────────────────────────────────────
+
+class GameEvent {
+    private String     message;
+    private GameStatus status;
+    private Player     winner;   // null if draw or in-progress
+
+    public GameEvent(String message, GameStatus status, Player winner) {
+        this.message = message;
+        this.status  = status;
+        this.winner  = winner;
+    }
+
+    public String     getMessage() { return message; }
+    public GameStatus getStatus()  { return status;  }
+    public Player     getWinner()  { return winner;  }
+}
+
+interface GameObserver {
+    void onGameEvent(GameEvent event);
+}
+
+// ── Observer 1 — Console display ─────────────────────────────
+class DisplayBoard implements GameObserver {
+    private Board board;
+
+    public DisplayBoard(Board board) {
+        this.board = board;
+    }
+
+    @Override
+    public void onGameEvent(GameEvent event) {
+        System.out.println("\n╔══════════════════════╗");
+        System.out.println("║   " + padRight(event.getMessage(), 19) + "║");
+        System.out.println("╚══════════════════════╝");
+
+        // Print current board state
+        Cell[][] cells = board.getCells();
+        System.out.println();
+        for (int i = 0; i < cells.length; i++) {
+            System.out.print("  ");
+            for (int j = 0; j < cells[i].length; j++) {
+                if (cells[i][j].isEmpty())
+                    System.out.print(" _ ");
+                else
+                    System.out.print(" " + cells[i][j].getSymbol() + " ");
+                if (j < cells[i].length - 1) System.out.print("|");
+            }
+            System.out.println();
+            if (i < cells.length - 1) {
+                System.out.println("  -----------");
+            }
+        }
+        System.out.println();
+
+        if (event.getStatus() == GameStatus.WIN)
+            System.out.println("  🏆  Winner: " + event.getWinner().getName());
+        else if (event.getStatus() == GameStatus.DRAW)
+            System.out.println("  🤝  It's a draw!");
+    }
+
+    private String padRight(String s, int n) {
+        return String.format("%-" + n + "s", s);
+    }
+}
+
+// ── Observer 2 — Leaderboard ─────────────────────────────────
+class LeaderboardObserver implements GameObserver {
+    @Override
+    public void onGameEvent(GameEvent event) {
+        if (event.getStatus() == GameStatus.WIN) {
+            System.out.println("  [Leaderboard] +1 point awarded to → "
+                + event.getWinner().getName());
+        } else if (event.getStatus() == GameStatus.DRAW) {
+            System.out.println("  [Leaderboard] No points — draw!");
+        }
+    }
+}
+
+// ── Observer 3 — Notification ────────────────────────────────
+class NotificationObserver implements GameObserver {
+    @Override
+    public void onGameEvent(GameEvent event) {
+        if (event.getStatus() != GameStatus.IN_PROGRESS) {
+            System.out.println("  [Notification] Game over → "
+                + event.getMessage());
+        }
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 6 — PLAYER  (Abstract Class)
+//
+//  WHY abstract class and NOT interface?
+//  → Player has shared STATE: name, symbol.
+//  → Interfaces cannot hold per-object state.
+//  → Abstract class lets subclasses inherit name + symbol
+//    without duplicating them.
+//
+//  JPA note (for real projects):
+//  @Entity
+//  @Inheritance(strategy = InheritanceType.JOINED)
+//  ↑ Creates: player table (id, name, symbol)
+//            human_player table (id FK, input_source)
+//            bot_player table   (id FK, difficulty)
+//  Hibernate does the JOIN automatically on fetch.
+// ─────────────────────────────────────────────────────────────
+
+abstract class Player {
+    // Shared state — reason we use abstract class not interface
+    private String name;
+    private Symbol symbol;
+
+    public Player(String name, Symbol symbol) {
+        this.name   = name;
+        this.symbol = symbol;
+    }
+
+    // Contract — every subclass MUST implement this
+    // HumanPlayer reads from console
+    // BotPlayer computes automatically
+    public abstract int[] makeMove(Board board);
+
+    public String getName()   { return name;   }
+    public Symbol getSymbol() { return symbol; }
+}
+
+// ── HumanPlayer ──────────────────────────────────────────────
+//  JPA: @Entity → creates human_player table with FK to player
+class HumanPlayer extends Player {
+    private java.util.Scanner scanner;
+
+    public HumanPlayer(String name, Symbol symbol) {
+        super(name, symbol);
+        this.scanner = new java.util.Scanner(System.in);
+    }
+
+    @Override
+    public int[] makeMove(Board board) {
+        System.out.print("  " + getName() + " [" + getSymbol()
+            + "] → enter row and col (0-indexed, space separated): ");
+        int row = scanner.nextInt();
+        int col = scanner.nextInt();
+        return new int[]{row, col};
+    }
+}
+
+// ── BotPlayer ────────────────────────────────────────────────
+//  JPA: @Entity → creates bot_player table with FK to player
+class BotPlayer extends Player {
+    private String difficulty;   // EASY, HARD, etc.
+
+    public BotPlayer(String name, Symbol symbol, String difficulty) {
+        super(name, symbol);
+        this.difficulty = difficulty;
+    }
+
+    @Override
+    public int[] makeMove(Board board) {
+        // Simple strategy: first available empty cell
+        Cell[][] cells = board.getCells();
+        for (int i = 0; i < board.getSize(); i++)
+            for (int j = 0; j < board.getSize(); j++)
+                if (cells[i][j].isEmpty()) {
+                    System.out.println("  " + getName()
+                        + " [" + getSymbol() + "] → plays at ("
+                        + i + ", " + j + ")");
+                    return new int[]{i, j};
+                }
+        return null; // board full — Game checks this separately
+    }
+
+    public String getDifficulty() { return difficulty; }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 7 — PLAYER FACTORY  (Factory Pattern)
+//  Centralizes player creation.
+//  GameController never calls new HumanPlayer() directly.
+//  Tomorrow if you add MinimaxBot, only Factory changes.
+// ─────────────────────────────────────────────────────────────
+
+class PlayerFactory {
+
+    public static Player createPlayer(PlayerType type,
+                                      String name,
+                                      Symbol symbol) {
+        switch (type) {
+            case HUMAN:
+                return new HumanPlayer(name, symbol);
+            case BOT:
+                return new BotPlayer(name, symbol, "EASY");
+            default:
+                throw new IllegalArgumentException(
+                    "Unknown player type: " + type);
+        }
+    }
+
+    // Overloaded for bot with custom difficulty
+    public static Player createBot(String name,
+                                   Symbol symbol,
+                                   String difficulty) {
+        return new BotPlayer(name, symbol, difficulty);
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 8 — GAME  (Orchestrator + Subject in Observer Pattern)
+//
+//  Responsibilities:
+//  1. Run the game loop (turns, move validation)
+//  2. Ask WinningStrategies after each move
+//  3. Notify all GameObservers on events
+//
+//  Game does NOT print anything directly.
+//  It fires events → observers handle display, leaderboard, etc.
+// ─────────────────────────────────────────────────────────────
+
+class Game {
+    private Board                      board;
+    private java.util.List<Player>     players;
+    private java.util.List<WinningStrategy> winStrategies;
+    private GameStatus                 status;
+    private int                        currentPlayerIndex;
+    private Player                     winner;
+
+    // Observer list — Subject holds references to all observers
+    private java.util.List<GameObserver> observers;
+
+    public Game(Board board,
+                java.util.List<Player> players,
+                java.util.List<WinningStrategy> strategies) {
+        this.board              = board;
+        this.players            = players;
+        this.winStrategies      = strategies;
+        this.status             = GameStatus.IN_PROGRESS;
+        this.currentPlayerIndex = 0;
+        this.observers          = new java.util.ArrayList<>();
+    }
+
+    // ── Observer registration ─────────────────────────────────
+    public void addObserver(GameObserver observer) {
+        observers.add(observer);
+    }
+
+    public void removeObserver(GameObserver observer) {
+        observers.remove(observer);
+    }
+
+    // ── Notify all observers ──────────────────────────────────
+    private void notifyObservers(GameEvent event) {
+        for (GameObserver obs : observers)
+            obs.onGameEvent(event);
+    }
+
+    // ── Main game loop ────────────────────────────────────────
+    public void start() {
+        System.out.println("\n═══════════════════════════════");
+        System.out.println("   TIC-TAC-TOE — GAME STARTS   ");
+        System.out.println("═══════════════════════════════");
+
+        // Notify initial board state
+        notifyObservers(new GameEvent(
+            "Game started!", GameStatus.IN_PROGRESS, null));
+
+        while (status == GameStatus.IN_PROGRESS) {
+
+            Player current = players.get(currentPlayerIndex);
+            System.out.println("\n--- " + current.getName()
+                + "'s turn (" + current.getSymbol() + ") ---");
+
+            // 1. Get move — retry loop if cell is taken
+            int[] move;
+            boolean valid = false;
+            do {
+                move  = current.makeMove(board);
+                valid = board.makeMove(
+                    move[0], move[1], current.getSymbol());
+            } while (!valid);
+
+            // 2. Notify: move was made (triggers DisplayBoard)
+            notifyObservers(new GameEvent(
+                current.getName() + " played ("
+                    + move[0] + "," + move[1] + ")",
+                GameStatus.IN_PROGRESS,
+                null));
+
+            // 3. Check win — ask every strategy
+            if (hasWon(move[0], move[1])) {
+                status = GameStatus.WIN;
+                winner = current;
+                // Notify: game won
+                notifyObservers(new GameEvent(
+                    current.getName() + " wins!",
+                    GameStatus.WIN,
+                    current));
+                return;
+            }
+
+            // 4. Check draw
+            if (board.isFull()) {
+                status = GameStatus.DRAW;
+                // Notify: draw
+                notifyObservers(new GameEvent(
+                    "It's a draw!",
+                    GameStatus.DRAW,
+                    null));
+                return;
+            }
+
+            // 5. Switch turn — works for 2+ players
+            currentPlayerIndex =
+                (currentPlayerIndex + 1) % players.size();
+        }
+    }
+
+    // Ask every WinningStrategy — if ANY says yes → won
+    private boolean hasWon(int row, int col) {
+        for (WinningStrategy strategy : winStrategies)
+            if (strategy.checkWin(board, row, col))
+                return true;
+        return false;
+    }
+
+    public GameStatus getStatus() { return status; }
+    public Player     getWinner() { return winner; }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  STEP 9 — GAME CONTROLLER  (Entry Point)
+//  Wires everything together.
+//  This is the ONLY place where setup happens.
+//  Swap players, strategies, observers here — nothing else changes.
+// ─────────────────────────────────────────────────────────────
+
+public class TicTacToe {
+    public static void main(String[] args) {
+
+        // 1. Create board (N×N — change 3 to 5 for 5×5 game)
+        Board board = new Board(3);
+
+        // 2. Create players via Factory
+        java.util.List<Player> players = new java.util.ArrayList<>();
+        players.add(PlayerFactory.createPlayer(
+            PlayerType.HUMAN, "Alice", Symbol.X));
+        players.add(PlayerFactory.createPlayer(
+            PlayerType.HUMAN, "Bob", Symbol.O));
+        // Swap Bob with a bot like this:
+        // players.add(PlayerFactory.createBot("Bot", Symbol.O, "HARD"));
+
+        // 3. Plug in winning strategies (all 3 for standard game)
+        java.util.List<WinningStrategy> strategies =
+            new java.util.ArrayList<>();
+        strategies.add(new RowWinningStrategy());
+        strategies.add(new ColWinningStrategy());
+        strategies.add(new DiagonalWinningStrategy());
+
+        // 4. Create game
+        Game game = new Game(board, players, strategies);
+
+        // 5. Register observers
+        //    DisplayBoard needs board reference to print grid
+        game.addObserver(new DisplayBoard(board));
+        game.addObserver(new LeaderboardObserver());
+        game.addObserver(new NotificationObserver());
+
+        // 6. Start — everything else is automatic
+        game.start();
+    }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+//  PATTERN SUMMARY
+// ─────────────────────────────────────────────────────────────
+//
+//  Pattern          │ Where used
+//  ─────────────────┼──────────────────────────────────────────
+//  Abstract Class   │ Player — shared name+symbol state
+//  Strategy         │ WinningStrategy — Row/Col/Diagonal
+//  Observer         │ Game (Subject) → DisplayBoard,
+//                   │   Leaderboard, Notification (Observers)
+//  Factory          │ PlayerFactory — creates Human or Bot
+//  ─────────────────┼──────────────────────────────────────────
+//
+//  JPA INHERITANCE (for real projects)
+//  ─────────────────────────────────────────────────────────────
+//  @Entity
+//  @Inheritance(strategy = InheritanceType.JOINED)
+//  abstract class Player → TABLE: player (id, name, symbol)
+//
+//  @Entity HumanPlayer  → TABLE: human_player (id FK, input_source)
+//  @Entity BotPlayer    → TABLE: bot_player   (id FK, difficulty)
+//
+//  Hibernate JOINs automatically. No NULL columns. Fully normalized.
+// ─────────────────────────────────────────────────────────────
